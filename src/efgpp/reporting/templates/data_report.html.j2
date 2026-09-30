@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EFGPP Data Report</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --border: rgba(11,11,11,0.10); --accent: #2a78d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --border: rgba(255,255,255,0.10); --accent: #3987e5;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --border: rgba(255,255,255,0.10); --accent: #3987e5;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { padding: 24px 16px 8px; max-width: 1200px; margin: 0 auto; }
+header h1 { margin: 0 0 4px; font-size: 22px; }
+header p { margin: 0; color: var(--ink-2); }
+.layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; max-width: 1200px; margin: 0 auto; padding: 16px; }
+nav { position: sticky; top: 16px; align-self: start; font-size: 13px; }
+nav a { display: block; color: var(--ink-2); text-decoration: none; padding: 3px 0; }
+nav a:hover { color: var(--accent); }
+section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; min-width: 0; }
+section h2 { margin: 0 0 8px; font-size: 17px; }
+.intro, .empty { color: var(--ink-2); margin: 0 0 12px; }
+.empty { font-style: italic; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.chart { min-width: 0; }
+.table-wrap { overflow-x: auto; margin: 8px 0 16px; }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+caption { text-align: left; font-weight: 600; padding: 4px 0 6px; color: var(--ink); }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+th { color: var(--ink-2); font-weight: 600; }
+td { font-variant-numeric: tabular-nums; word-break: break-word; }
+ul.notes { color: var(--ink-2); margin: 0 0 8px; }
+.theme { position: fixed; top: 12px; right: 16px; font: inherit; background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+@media (max-width: 800px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  nav { position: static; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  .charts { grid-template-columns: minmax(0, 1fr); }
+}
+</style>
+{{ plotly_tag | safe }}
+</head>
+<body>
+<button class="theme" type="button" onclick="toggleTheme()">Theme</button>
+<header>
+  <h1>EFGPP data report — {{ project }}</h1>
+  <p>{{ "{:,}".format(participants) }} participants · generated {{ generated }} UTC · EFGPP {{ version }}
+  {% if multiqc %} · <a href="{{ multiqc }}">MultiQC report</a>{% endif %}</p>
+</header>
+<div class="layout">
+<nav aria-label="Sections">
+{% for s in sections %}<a href="#{{ s.id }}">{{ s.title }}</a>{% endfor %}
+</nav>
+<main>
+{% for s in sections %}
+<section id="{{ s.id }}">
+  <h2>{{ s.title }}</h2>
+  {% if s.intro %}<p class="intro">{{ s.intro }}</p>{% endif %}
+  {% if s.empty %}<p class="empty">{{ s.empty }}</p>{% endif %}
+  {% if s.notes %}<ul class="notes">{% for n in s.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
+  {% if s.charts %}<div class="charts">{% for c in s.charts %}<div class="chart">{{ c | safe }}</div>{% endfor %}</div>{% endif %}
+  {% for t in s.tables %}{% if t.rows %}
+  <div class="table-wrap"><table>
+    <caption>{{ t.caption }}</caption>
+    <thead><tr>{% for c in t.columns %}<th scope="col">{{ c }}</th>{% endfor %}</tr></thead>
+    <tbody>{% for r in t.rows %}<tr>{% for v in r %}<td>{{ v }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+  </table></div>
+  {% endif %}{% endfor %}
+</section>
+{% endfor %}
+</main>
+</div>
+<script>
+function toggleTheme() {
+  const root = document.documentElement;
+  const dark = root.getAttribute('data-theme') === 'dark' ||
+    (!root.getAttribute('data-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  root.setAttribute('data-theme', dark ? 'light' : 'dark');
+  location.hash = location.hash; location.reload();
+}
+try { const t = sessionStorage.getItem('efgpp-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+window.addEventListener('beforeunload', () => {
+  try { const t = document.documentElement.getAttribute('data-theme'); if (t) sessionStorage.setItem('efgpp-theme', t); } catch (e) {}
+});
+{{ dark_script | safe }}
+</script>
+</body>
+</html>

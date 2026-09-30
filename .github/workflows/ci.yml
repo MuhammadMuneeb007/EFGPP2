@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - run: uv run ruff check src tests
+      - run: uv run mypy
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    env:
+      # PLINK 2 (a few MB) is fetched once by the test fixture and cached; no reference
+      # resources are downloaded - large providers are mocked.
+      EFGPP_TEST_CACHE: ${{ github.workspace }}/.test-cache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/cache@v4
+        with:
+          path: .test-cache
+          key: plink2-${{ runner.os }}-${{ runner.arch }}
+      - run: uv sync
+      - run: uv run pytest --cov=efgpp --cov-report=term-missing --cov-report=xml

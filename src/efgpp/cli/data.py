@@ -1,0 +1,381 @@
+"""`efgpp data ...` commands."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import typer
+
+from efgpp.cli.common import console, load_project, table, user_path
+from efgpp.config.data import (
+    ClinicalSource,
+    GenotypeSource,
+    OmicsSource,
+    SampleIdSpec,
+    TimelineSpec,
+)
+from efgpp.config.data import CovariateSource as CovSource
+from efgpp.constants import Modality, Origin, StorageMode
+
+app = typer.Typer(help="Register, validate, prepare and freeze participant-level data.", no_args_is_help=True)
+add_app = typer.Typer(help="Add a participant-level source to data.yaml and register it.", no_args_is_help=True)
+app.add_typer(add_app, name="add")
+
+
+def _register(project, source_id: str) -> None:  # type: ignore[no-untyped-def]
+    from efgpp.data.manager import DataManager
+    from efgpp.data.registry import Registry
+
+    with Registry.open(project) as reg:
+        art = DataManager(project).adapter(reg, source_id).register()
+    notes = "; ".join(art.metadata.get("notes", []))
+    console.print(f"[green]✓[/] {source_id} registered as {art.artifact_id} "
+                  f"(storage: {art.storage_mode}{'; ' + notes if notes else ''})")
+
+
+def _timeline(event_column: str | None, time_column: str | None) -> TimelineSpec | None:
+    if not (event_column or time_column):
+        return None
+    return TimelineSpec(event_column=event_column, time_column=time_column)
+
+
+@add_app.command("genotype")
+def add_genotype(
+    path: str = typer.Option(..., "--path", help="PLINK prefix, or BGEN/VCF/BCF file"),
+    format: str = typer.Option("auto", "--format", help="pgen | bed | bgen | vcf | bcf | auto"),
+    build: str = typer.Option("auto", "--build", help="GRCh37 | GRCh38 | auto"),
+    mode: StorageMode = typer.Option(StorageMode.REFERENCE, "--mode"),
+    source_id: str | None = typer.Option(None, "--id"),
+    origin: Origin = typer.Option(Origin.OBSERVED, "--origin"),
+    sample_id_mode: str = typer.Option("iid", "--sample-id-mode", help="iid | fid_iid"),
+) -> None:
+    """Add a genotype dataset (referenced in place by default; never duplicated)."""
+    project = load_project()
+    sid = source_id or project.data.next_id("GENO")
+    project.data.observed.genotype.append(GenotypeSource(
+        id=sid, path=user_path(project, path), format=format, genome_build=build, mode=mode, origin=origin,
+        sample_id=SampleIdSpec(mode=sample_id_mode)))  # type: ignore[arg-type]
+    project.save_data_config()
+    _register(project, sid)
+
+
+@add_app.command("covariates", context_settings={"allow_extra_args": True, "ignore_unknown_options": False})
+def add_covariates(
+    ctx: typer.Context,
+    path: str = typer.Option(..., "--path"),
+    id_column: str = typer.Option("participant_id", "--id-column"),
+    columns: str = typer.Option(..., "--columns", help="covariate columns (space or comma separated)"),
+    categorical: str = typer.Option("", "--categorical", help="comma-separated categorical columns"),
+    event_column: str | None = typer.Option(None, "--event-column"),
+    mode: StorageMode = typer.Option(StorageMode.AUTO, "--mode"),
+    source_id: str | None = typer.Option(None, "--id"),
+) -> None:
+    """Add a covariate table. Example: --columns age sex bmi"""
+    project = load_project()
+    variables = [c for part in [columns, *ctx.args] for c in part.replace(",", " ").split()]
+    sid = source_id or project.data.next_id("COV")
+    project.data.observed.covariates.append(CovSource(
+        id=sid, path=user_path(project, path), participant_id_column=id_column, variables=variables,
+        categorical=[c for c in categorical.split(",") if c], mode=mode, timeline=_timeline(event_column, None)))
+    project.save_data_config()
+    _register(project, sid)
+
+
+def _add_omics(modality: Modality, prefix: str):  # type: ignore[no-untyped-def]
+    def command(
+        path: str = typer.Option(..., "--path"),
+        origin: Origin = typer.Option(Origin.OBSERVED, "--origin"),
+        id_column: str = typer.Option("participant_id", "--id-column"),
+        tissue: str | None = typer.Option(None, "--tissue"),
+        event_column: str | None = typer.Option(None, "--event-column"),
+        time_column: str | None = typer.Option(None, "--time-column"),
+        biospecimen_column: str | None = typer.Option(None, "--biospecimen-column"),
+        batch_column: str | None = typer.Option(None, "--batch-column"),
+        feature_id_system: str | None = typer.Option(None, "--feature-id-system"),
+        measurement_type: str | None = typer.Option(None, "--measurement-type"),
+        normalization: str | None = typer.Option(None, "--normalization"),
+        platform: str | None = typer.Option(None, "--platform"),
+        units: str | None = typer.Option(None, "--units"),
+        genome_build: str | None = typer.Option(None, "--build"),
+        orientation: str = typer.Option("samples_by_features", "--orientation"),
+        feature_id_column: str | None = typer.Option(None, "--feature-id-column"),
+        mode: StorageMode = typer.Option(StorageMode.AUTO, "--mode"),
+        source_id: str | None = typer.Option(None, "--id"),
+    ) -> None:
+        project = load_project()
+        if origin == Origin.PREDICTED:
+            console.print("[yellow]note:[/] predicted modalities are usually generated by `efgpp data prepare` "
+                          "(predicted: section of data.yaml); registering an external predicted matrix.")
+        sid = source_id or project.data.next_id(prefix)
+        src = OmicsSource(
+            id=sid, path=user_path(project, path), origin=origin, participant_id_column=id_column, tissue=tissue,
+            timeline=_timeline(event_column, time_column), biospecimen_column=biospecimen_column,
+            batch_column=batch_column, feature_id_system=feature_id_system, measurement_type=measurement_type,
+            normalization=normalization, platform=platform, units=units, genome_build=genome_build,
+            orientation=orientation, feature_id_column=feature_id_column, mode=mode)  # type: ignore[arg-type]
+        getattr(project.data.observed, modality.value).append(src)
+        project.save_data_config()
+        _register(project, sid)
+
+    command.__doc__ = f"Add a processed {modality.value} matrix (CSV/TSV/Parquet/AnnData/Zarr)."
+    return command
+
+
+for _m, _p in ((Modality.EXPRESSION, "RNA"), (Modality.METHYLATION, "METH"), (Modality.PROTEOMICS, "PROT"),
+               (Modality.METABOLOMICS, "METAB")):
+    add_app.command(_m.value)(_add_omics(_m, _p))
+
+
+@add_app.command("clinical")
+def add_clinical(
+    path: str = typer.Option(..., "--path"),
+    id_column: str = typer.Option("participant_id", "--id-column"),
+    layout: str = typer.Option("wide", "--layout", help="wide | long"),
+    variable_column: str | None = typer.Option(None, "--variable-column"),
+    value_column: str | None = typer.Option(None, "--value-column"),
+    unit_column: str | None = typer.Option(None, "--unit-column"),
+    event_column: str | None = typer.Option(None, "--event-column"),
+    time_column: str | None = typer.Option(None, "--time-column"),
+    mode: StorageMode = typer.Option(StorageMode.AUTO, "--mode"),
+    source_id: str | None = typer.Option(None, "--id"),
+) -> None:
+    """Add clinical/laboratory measurements (wide or long layout)."""
+    project = load_project()
+    sid = source_id or project.data.next_id("CLIN")
+    project.data.observed.clinical.append(ClinicalSource(
+        id=sid, path=user_path(project, path), participant_id_column=id_column, layout=layout,  # type: ignore[arg-type]
+        variable_column=variable_column, value_column=value_column, unit_column=unit_column,
+        timeline=_timeline(event_column, time_column), mode=mode))
+    project.save_data_config()
+    _register(project, sid)
+
+
+@app.command()
+def inspect() -> None:
+    """What exists: every configured source with format, size, participants and features."""
+    from efgpp.data.manager import DataManager
+
+    project = load_project()
+    rows = []
+    for i in DataManager(project).inspect():
+        rows.append([i.get("source_id"), i.get("modality"), i.get("origin"), i.get("format"),
+                     "yes" if i.get("exists") else "[red]no[/]", i.get("samples") or i.get("participants") or i.get("rows"),
+                     i.get("variants") or i.get("features") or i.get("columns"),
+                     i.get("genome_build") or i.get("tissue") or ""])
+    console.print(table("EFGPP DATA INSPECT", ["source", "modality", "origin", "format", "exists", "participants",
+                                               "features", "build/tissue"], rows))
+
+
+@app.command()
+def validate() -> None:
+    """Validate every source and cross-source consistency (collects all errors)."""
+    from efgpp.data.manager import DataManager
+
+    project = load_project()
+    DataManager(project).register_all()
+    reports = DataManager(project).validate()
+    failed = 0
+    for rep in reports:
+        console.print()
+        for line in rep.render_lines():
+            console.print(line)
+        failed += 0 if rep.passed else 1
+    console.print()
+    if failed:
+        console.print(f"[red]{failed} validation report(s) with errors[/]")
+        raise typer.Exit(1)
+    console.print("[green]all sources valid[/]")
+
+
+@app.command()
+def plan() -> None:
+    """What can be generated now, what cannot, and why. Writes workflow/plan.json + Snakefile."""
+    from efgpp.data.plan import build_plan, write_plan
+    from efgpp.workflow.snakemake import write_snakefile
+
+    project = load_project()
+    steps = build_plan(project)
+    write_plan(project, steps)
+    write_snakefile(project, steps)
+    rows = [["[green]run[/]" if s.enabled else "[yellow]blocked[/]", s.id, s.description if s.enabled else s.reason,
+             ",".join(s.tools) or "-", s.env] for s in steps]
+    console.print(table("EFGPP DATA PLAN", ["", "step", "what / why not", "tools", "env"], rows))
+    console.print(f"[dim]{project.relative(project.path('workflow', 'plan.json'))} and workflow/Snakefile written[/]")
+
+
+def _run(kinds: set[str] | None, cores: int | None, executor: str | None, engine: str | None, force: bool, dry_run: bool) -> None:
+    from efgpp.setup.lock import write_lock
+    from efgpp.workflow.executor import prepare
+
+    project = load_project()
+    outcomes = prepare(project, kinds=kinds, cores=cores, executor=executor, engine=engine, force=force,
+                       dry_run=dry_run, console=console)
+    write_lock(project)
+    rows = [[o.step_id, o.status, f"{o.seconds:.1f}s" if o.seconds else "", o.detail or ""] for o in outcomes]
+    console.print(table("Summary", ["step", "status", "time", "detail"], rows))
+    if any(o.status == "failed" for o in outcomes):
+        raise typer.Exit(1)
+
+
+EXECUTOR = typer.Option(None, "--executor", help="local | slurm (through Snakemake)")
+ENGINE = typer.Option(None, "--engine", help="snakemake | builtin | auto")
+
+
+@app.command()
+def prepare(cores: int = typer.Option(None, "--cores"), executor: str = EXECUTOR, engine: str = ENGINE,
+            force: bool = typer.Option(False, "--force", help="rerun up-to-date steps"),
+            dry_run: bool = typer.Option(False, "--dry-run")) -> None:
+    """Run the full data lifecycle (register -> ... -> availability -> report)."""
+    _run(None, cores, executor, engine, force, dry_run)
+
+
+@app.command()
+def qc(cores: int = typer.Option(None, "--cores"), executor: str = EXECUTOR, engine: str = ENGINE,
+       force: bool = typer.Option(False, "--force")) -> None:
+    """Run QC steps only (and what they depend on)."""
+    _run({"qc", "genotype_qc"}, cores, executor, engine, force, False)
+
+
+@app.command()
+def derive(cores: int = typer.Option(None, "--cores"), executor: str = EXECUTOR, engine: str = ENGINE,
+           force: bool = typer.Option(False, "--force")) -> None:
+    """Run phenotype-independent derivations, annotation and prediction steps."""
+    _run({"pca", "roh", "ancestry", "annotate_", "predict"}, cores, executor, engine, force, False)
+
+
+@app.command()
+def step(step_id: str = typer.Argument(...), threads: int = typer.Option(1, "--threads"),
+         marker: str | None = typer.Option(None, "--marker")) -> None:
+    """Run a single plan step (used by Snakemake rules and SLURM scripts)."""
+    from efgpp.data.plan import build_plan, run_step
+    from efgpp.workflow.executor import write_marker
+
+    project = load_project()
+    steps = {s.id: s for s in build_plan(project)}
+    if step_id not in steps:
+        console.print(f"[red]unknown step {step_id}[/]")
+        raise typer.Exit(2)
+    s = steps[step_id]
+    result = run_step(project, s, threads=threads)
+    if marker:
+        write_marker(project, s)
+    console.print(result)
+
+
+@app.command()
+def availability() -> None:
+    """Which participants have which modalities; intersections."""
+    from efgpp.data import availability as av_mod
+
+    project = load_project()
+    av = av_mod.build(project)
+    console.print(f"\n[bold]Participants: {av.n_participants:,}[/]\n")
+    for origin, entries in av_mod.summary_rows(av):
+        console.print(f"[bold]{origin}[/]")
+        for col, n in entries:
+            console.print(f"  {col:<34}{n:>10,}")
+        console.print()
+    for a in av.participant_level_free:
+        console.print(f"  {a['artifact_name']:<34}{'available':>10}")
+    inter = av.key_intersections()
+    if inter:
+        console.print(table("Key intersections", ["modalities", "participants"],
+                            [[i["modalities"], i["participants"]] for i in inter]))
+    console.print("[dim]registry/availability.parquet written[/]")
+
+
+@app.command()
+def report() -> None:
+    """Generate reports/data/index.html."""
+    from efgpp.reporting.data_report import build_report
+
+    project = load_project()
+    out = build_report(project)
+    console.print(f"[green]✓[/] {out}")
+
+
+@app.command()
+def freeze(name: str = typer.Option(..., "--name"),
+           include_failed: bool = typer.Option(False, "--include-failed")) -> None:
+    """Create an immutable DataSnapshot for the Representation layer."""
+    from efgpp.data.snapshots import freeze as do_freeze
+    from efgpp.setup.lock import write_lock
+
+    project = load_project()
+    write_lock(project)
+    try:
+        path = do_freeze(project, name, include_failed=include_failed)
+    except (FileExistsError, RuntimeError) as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1) from exc
+    console.print(f"[green]✓[/] snapshot {name} -> {project.relative(path)}")
+
+
+@app.command()
+def snapshots() -> None:
+    """List frozen snapshots."""
+    from efgpp.data.snapshots import list_snapshots
+
+    project = load_project()
+    rows = [[s["snapshot_id"], s["name"], s["created_at"], s["path"]] for s in list_snapshots(project)]
+    console.print(table("Snapshots", ["id", "name", "created", "path"], rows))
+
+
+@app.command()
+def verify(name: str = typer.Argument(..., help="snapshot name")) -> None:
+    """Re-check every file hash recorded in a snapshot."""
+    from efgpp.data.snapshots import DataSnapshot
+
+    project = load_project()
+    problems = DataSnapshot.load(project, name).verify()
+    if problems:
+        for k, v in problems.items():
+            console.print(f"[red]✗[/] {k}: {v}")
+        raise typer.Exit(1)
+    console.print(f"[green]✓[/] snapshot {name} intact")
+
+
+@app.command()
+def migrate(source: Path = typer.Option(..., "--source", exists=True, file_okay=False),
+            profile: str = typer.Option("legacy-efgpp", "--profile"),
+            mode: StorageMode = typer.Option(StorageMode.REFERENCE, "--mode"),
+            dry_run: bool = typer.Option(False, "--dry-run"), apply_: bool = typer.Option(False, "--apply")) -> None:
+    """Migrate an old project (never modifies the source)."""
+    from efgpp.data import migrate as mig
+
+    project = load_project()
+    if dry_run == apply_:
+        console.print("[red]choose exactly one of --dry-run or --apply[/]")
+        raise typer.Exit(2)
+    if dry_run:
+        items = mig.scan(source, profile)
+        path = mig.write_plan(project, source, profile, mode, items)
+        counts: dict[str, int] = {}
+        for it in items:
+            counts[it.kind] = counts.get(it.kind, 0) + 1
+        console.print(table("Migration plan", ["kind", "files"], [[k, v] for k, v in sorted(counts.items())]))
+        console.print(f"[green]✓[/] {project.relative(path)} written; review it, then run with --apply")
+        return
+    done = mig.apply(project, source, profile, mode)
+    console.print(table("Migrated", ["kind", "registered"], [[k, ", ".join(v)] for k, v in done.items()]))
+
+
+@app.command()
+def liftover(artifact_id: str = typer.Argument(...), to: str = typer.Option(..., "--to", help="GRCh37 | GRCh38"),
+             threads: int = typer.Option(1, "--threads")) -> None:
+    """Lift a genotype artifact to another build (creates a new artifact)."""
+    from efgpp.data.genotype.harmonization import run_liftover
+
+    project = load_project()
+    new = run_liftover(project, artifact_id, to, threads=threads)
+    console.print(f"[green]✓[/] {artifact_id} -> {new}")
+
+
+@app.command()
+def simulate() -> None:
+    """Generate the simulated modalities enabled under `simulation:` in data.yaml."""
+    from efgpp.data.simulate import run_simulation
+
+    project = load_project()
+    added = run_simulation(project)
+    console.print(f"[green]✓[/] simulated sources: {', '.join(added) or 'none (enable simulation.genotype)'}")
