@@ -45,16 +45,18 @@ PLINK2_PAGE = "https://www.cog-genomics.org/plink/2.0/"
 PLINK19_PAGE = "https://www.cog-genomics.org/plink/1.9/"
 FLASHPCA_RELEASE = "https://github.com/gabraham/flashpca/releases/download/v2.0"
 SAMTOOLS_API = "https://api.github.com/repos/samtools/{repo}/releases/latest"
-METAXCAN_ARCHIVE = "https://github.com/hakyimlab/MetaXcan/archive/refs/heads/master.zip"
+METAXCAN_REPO = "hakyimlab/MetaXcan"
 VEP_IMAGE = "docker://ensemblorg/ensembl-vep:latest"
 
 PYTHON_TOOLS: dict[str, tuple[str, list[str], list[str]]] = {
     # tool: (environment name, pip requirements, executables exposed in bin/)
     "multiqc": ("reporting", ["multiqc"], ["multiqc"]),
     "oc": ("opencravat", ["open-cravat"], ["oc"]),
+    # fallback when Bioconda's spliceai cannot be solved: pip, with TensorFlow inside this environment only
+    "spliceai": ("spliceai", ["spliceai", "tensorflow>=2.10,<2.16"], ["spliceai"]),
 }
-METAXCAN_REQUIREMENTS = ["numpy<2", "scipy<1.14", "pandas>=2,<2.3", "statsmodels", "h5py", "pyliftover",
-                         "cyvcf2", "bgen"]
+METAXCAN_REQUIREMENTS = ["numpy<2", "scipy<1.14", "pandas>=2,<2.3", "sqlalchemy", "patsy", "statsmodels", "h5py",
+                         "pyliftover", "cyvcf2", "bgen-reader"]
 
 Progress = Callable[[str], None]
 
@@ -80,8 +82,11 @@ CONDA_TOOLS: dict[str, tuple[str, list[str], list[str], list[str]]] = {
     "multiqc": ("multiqc", ["multiqc"], [], ["multiqc"]),
     "oc": ("opencravat", ["open-cravat"], [], ["oc"]),
     "vep": ("vep", ["ensembl-vep", "perl", "htslib"], [], ["vep", "vep_install"]),
-    "predixcan": ("predixcan", ["python=3.10", "numpy<2", "scipy", "pandas<2.3", "statsmodels", "h5py", "cyvcf2",
-                                "pip"], ["bgen", "pyliftover"], []),
+    # MetaXcan (Python 3): source pinned to a resolved commit, see metaxcan_source()
+    "predixcan": ("predixcan", ["python=3.11", "numpy<2", "scipy", "pandas<2.3", "sqlalchemy", "patsy", "statsmodels",
+                                "h5py", "cyvcf2", "pip"], ["bgen-reader", "pyliftover"], []),
+    # TensorFlow < 2.16 keeps Keras 2, which loads SpliceAI's bundled .h5 models
+    "spliceai": ("spliceai", ["python=3.10", "spliceai", "tensorflow>=2.10,<2.16", "pip"], [], ["spliceai"]),
     # GWASLab pins pysam/matplotlib/pandas versions: it must never share the efgpp environment.
     "gwaslab": ("gwaslab", ["python=3.11", "gwaslab", "pyliftover", "pyarrow"], [], ["python:gwaslab-python"]),
 }
@@ -336,15 +341,25 @@ def install_metaxcan(root: Path, info: PlatformInfo, say: Progress) -> InstallRe
 
 
 def metaxcan_source(root: Path, py: Path, info: PlatformInfo, say: Progress) -> Path:
-    """Download MetaXcan and write the `predixcan` wrapper that runs Predict.py with `py`."""
-    say("downloading MetaXcan source")
-    archive = root / "downloads" / "MetaXcan-master.zip"
-    download(METAXCAN_ARCHIVE, archive)
+    """Download MetaXcan at a resolved commit (pinned in opt/MetaXcan/EFGPP_SOURCE.json and the lock
+    file) and write the `predixcan` wrapper that runs Predict.py with `py`."""
+    from efgpp.setup.toolkit_installer import resolve_commit, write_source_pin
+
+    commit = resolve_commit(METAXCAN_REPO, "master")
+    if commit is None:
+        raise InstallError("could not resolve the MetaXcan commit (GitHub API unreachable); nothing installed")
+    say(f"downloading MetaXcan @ {commit[:10]}")
+    archive = root / "downloads" / f"MetaXcan-{commit[:12]}.zip"
+    archive_sha = download(f"https://github.com/{METAXCAN_REPO}/archive/{commit}.zip", archive)
     src = root / "opt" / "MetaXcan"
     shutil.rmtree(src, ignore_errors=True)
+    staging = root / "opt" / ".MetaXcan.tmp"
+    shutil.rmtree(staging, ignore_errors=True)
     with zipfile.ZipFile(archive) as z:
-        z.extractall(root / "opt")
-    (root / "opt" / "MetaXcan-master").rename(src)
+        z.extractall(staging)
+    next(staging.iterdir()).rename(src)
+    shutil.rmtree(staging, ignore_errors=True)
+    write_source_pin(src, METAXCAN_REPO, "master", commit, archive_sha)
     script = src / "software" / "Predict.py"
     if info.is_windows:
         wrapper = root / "bin" / "predixcan.bat"
@@ -404,6 +419,7 @@ INSTALLERS: dict[str, Callable[[Path, PlatformInfo, Progress], InstallResult]] =
     "bgzip": install_htslib_bcftools,
     "multiqc": lambda r, i, s: install_python_tool("multiqc", r, i, s),
     "oc": lambda r, i, s: install_python_tool("oc", r, i, s),
+    "spliceai": lambda r, i, s: install_python_tool("spliceai", r, i, s),
     "predixcan": install_metaxcan,
     "gwaslab": lambda r, i, s: install_gwaslab_venv(r, i, s),
     "vep": install_vep_container,
@@ -416,6 +432,7 @@ COMPONENT_TOOLS = {
     "metaxcan": ["predixcan"],
     "reporting": ["multiqc"],
     "gwas": ["gwaslab"],
+    "spliceai": ["spliceai"],
 }
 
 

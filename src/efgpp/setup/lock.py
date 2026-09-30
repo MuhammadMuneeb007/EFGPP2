@@ -30,6 +30,20 @@ def _env_hash(project: Project, name: str) -> dict[str, Any] | None:
             "sha256": str(checksum_paths(files).value), "files": [p.name for p in files]}
 
 
+def _source_pins(project: Project) -> dict[str, Any]:
+    """Pinned source installs (software/opt/<name>/EFGPP_SOURCE.json): repository, commit, archive SHA-256."""
+    import json
+
+    out: dict[str, Any] = {}
+    for d in (project.software_dir, *project.legacy_software_dirs):
+        for pin in sorted((d / "opt").glob("*/EFGPP_SOURCE.json")) if (d / "opt").exists() else []:
+            try:
+                out[pin.parent.name] = json.loads(pin.read_text(encoding="utf-8"))
+            except ValueError:
+                continue
+    return out
+
+
 def write_lock(project: Project, containers: dict[str, str | None] | None = None) -> Path:
     packages = {}
     for pkg in PYTHON_PACKAGES:
@@ -49,6 +63,7 @@ def write_lock(project: Project, containers: dict[str, str | None] | None = None
         "software": software,
         "environments": {n: h for n in ENV_NAMES if (h := _env_hash(project, n))},
         "containers": containers or {},
+        "sources": _source_pins(project),
         "resources": [
             {k: v for k, v in r.items() if k != "metadata"}
             | {"download_sha256": (r.get("metadata") or {}).get("download_sha256")}

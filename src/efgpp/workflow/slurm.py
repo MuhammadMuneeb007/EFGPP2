@@ -19,7 +19,7 @@ def step_command(project: Project, step: Step, threads: str = "1") -> str:
     return (f'"{python}" -m efgpp --project "{project.root.as_posix()}" data step {shlex.quote(step.id)} '
             f"--threads {threads} --marker {step.marker}")
 
-GROUP_ORDER = ["prepare", "genotype_qc", "pca", "relatedness", "annotation", "expression_prediction", "report"]
+GROUP_ORDER = ["prepare", "genotype_qc", "pca", "relatedness", "annotation", "prediction", "report"]
 
 
 def _group_dependencies(steps: list[Step]) -> dict[str, set[str]]:

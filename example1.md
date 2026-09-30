@@ -96,6 +96,8 @@ efgpp setup tools
 # ---------------------------------------------------------------------------
 efgpp setup toolkit --list
 efgpp setup toolkit all
+efgpp setup toolkit predicted-omics                # MetaXcan (pinned commit) + R for MIMOSA
+efgpp setup toolkit spliceai                       # SpliceAI + TensorFlow in its own environment
 # DBSLMM's `dbslmm` binary is on Google Drive only (see github.com/biostat0903/DBSLMM):
 # put it in ./software/opt/DBSLMM/software/dbslmm
 
@@ -106,7 +108,14 @@ efgpp resources install genome --build GRCh38     # FASTA + liftover chains (GRC
 efgpp resources install vep                       # VEP cache (large, one time)
 efgpp resources install clinvar                   # clinical significance per variant
 efgpp resources install alphamissense             # missense pathogenicity scores
-efgpp resources install predictdb                 # GTEx v8 models for PrediXcan (49 tissues)
+# genetic prediction models (software above, model data here; nothing large is downloaded silently)
+efgpp resources install predictdb-gtex-v8-expression   # GTEx v8 MASHR eQTL, 49 tissues (~262 MB)
+efgpp resources install predictdb-gtex-v8-splicing     # GTEx v8 MASHR sQTL (~669 MB)
+efgpp resources omicspred refresh                      # OmicsPred catalogue (REST API)
+efgpp resources omicspred list --modality metabolomics # pick datasets; e.g. OPD000003 = INTERVAL Nightingale
+efgpp resources install omicspred --dataset OPD000003  # metabolite genetic scores (European training)
+# efgpp resources omicspred list --modality proteomics # then: efgpp resources install omicspred --dataset <id>
+efgpp resources install mimosa                         # whole-blood methylation models (~3.5 GB)
 # efgpp resources install pgs_catalog             # first set pgs_catalog.score_ids in resources.yaml
 efgpp resources list
 
@@ -150,15 +159,24 @@ efgpp data gwas list --phenotype migraine
 cat data.yaml
 
 # ---------------------------------------------------------------------------
-# C3. Switch on variant annotation and predicted expression (run by `prepare`)
+# C3. Genotype-derived molecular data (all phenotype-independent; run by `prepare`)
+#     participant carriers (ALT checked against the GRCh38 FASTA) -> VEP / ClinVar /
+#     AlphaMissense / SpliceAI -> consequence counts per person + gene burden
+#     + genetically predicted expression, splicing, metabolites, methylation
 # ---------------------------------------------------------------------------
-efgpp resources enable vep clinvar alphamissense
-efgpp data predict --tissue Whole_Blood           # more tissues: --tissue Brain_Cortex ...
+efgpp data variants enable --spliceai
+efgpp data predict enable expression --tissue Whole_Blood      # or --tissue all (49 tissues)
+efgpp data predict enable splicing --tissue Whole_Blood
+efgpp data predict enable metabolomics --dataset OPD000003
+efgpp data predict enable methylation
+efgpp data predict plan                          # READY / NOT INSTALLED, with the command that fixes it
 
 # ---------------------------------------------------------------------------
 # C4. Validate and run (stop and fix if validate shows ✗)
-#     prepare: liftover to GRCh38 -> genotype QC -> PCA / kinship
-#              -> VEP / ClinVar / AlphaMissense -> PrediXcan -> availability -> report
+#     prepare: liftover to GRCh38 -> genotype QC -> PCA / kinship -> participant carriers
+#              -> VEP / ClinVar / AlphaMissense / SpliceAI -> consequence counts, gene burden
+#              -> predicted expression / splicing / metabolites / methylation -> availability -> report
+#     (only these steps: efgpp data variants run  /  efgpp data predict all)
 # ---------------------------------------------------------------------------
 efgpp data validate
 efgpp data plan                                   # every step, and why a step is skipped
@@ -181,6 +199,7 @@ efgpp data verify migraine_v1
 # efgpp modules export covariates                 # edit modules/covariates.py for this project, re-add
 # efgpp data gwas run GWAS001 --force             # re-run GWASLab
 # efgpp resources enable clinvar --off            # switch an annotation off
+# efgpp data predict enable splicing --off        # switch a predicted modality off
 # efgpp export slurm                              # sbatch scripts in hpc/ instead of running locally
 # logs: ./software/logs/<tool>.install.log  and  ./logs/
 # never `mamba install` a tool into the efgpp env; use `efgpp setup tools <tool> --force`
@@ -196,8 +215,13 @@ efgpp data verify migraine_v1
 | QC-passed genotype (GRCh38) | `data/derived/genotype_qc/GENO001/GENO001_qc.*` |
 | GWAS, original column names (GRCh38) | `resources/gwas/GWAS001/GWAS001.GRCh38.parquet` |
 | GWAS, GWASLab names (GRCh38) | `resources/gwas/GWAS001/GWAS001.GRCh38.gwaslab.parquet` + `GWAS001.gwaslab_report.json` |
-| variant annotations | `data/derived/variant_annotations/GENO001/GENO001_{vep,clinvar,alphamissense}.parquet` |
-| predicted expression | `data/predicted/expression/Whole_Blood/predicted_expression_Whole_Blood.parquet` |
+| variant annotations | `data/derived/variant_annotations/GENO001/GENO001_{vep,clinvar,alphamissense,spliceai}.parquet` |
+| carrier variants per participant | `data/derived/participant_variants/GENO001/participant_variants/chromosome=*/` + `variants.parquet` |
+| mutation counts per participant | `data/derived/consequence_burden/GENO001/participant_consequence_counts.parquet` |
+| gene burden per participant | `data/derived/consequence_burden/GENO001/participant_gene_burden.parquet` |
+| predicted expression / splicing | `data/predicted/{expression,splicing}/gtex_v8/Whole_Blood/predicted_*.parquet` + `model_qc.parquet` + `manifest.yaml` |
+| predicted metabolites | `data/predicted/metabolomics/omicspred/OPD000003/predicted_metabolomics.parquet` |
+| predicted methylation | `data/predicted/methylation/mimosa/whole_blood/predicted_methylation.parquet` |
 | report, snapshot | `reports/data/index.html`, `snapshots/migraine_v1.yaml` + `snapshots/migraine_v1/` |
 
 **Notes**
@@ -207,4 +231,7 @@ efgpp data verify migraine_v1
   GRCh38 copy (see the liftover report).
 - `migraine_QC.*` is not needed (EFGPP runs its own QC); the other `migraine*.txt`, `.PRSCS`, …
   are old PRS results.
-- More detail: `Document.MD` (sections 11–13) and `Commands.md`.
+- Predicted values are genetically predicted components, not measurements (not RNA-seq, not measured
+  metabolites, not methylation beta values). The migraine data is a SNP array: carrier counts cover
+  the ~620k probed sites, and some model variants will be missing (see `model_qc.parquet`).
+- More detail: `Document.MD` (sections 11–14) and `Commands.md`.

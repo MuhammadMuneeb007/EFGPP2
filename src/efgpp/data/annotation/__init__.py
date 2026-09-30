@@ -23,8 +23,19 @@ KEY = ["chromosome", "position", "reference", "alternate"]
 
 
 def cohort_variants(project: Project, source_id: str, qc_only: bool = True) -> tuple[pl.DataFrame, Artifact, str | None]:
-    """The standardized variant table of a genotype source, restricted to QC-passing
-    variants when QC has run. Returns (variants, variant artifact, genome build)."""
+    """Variants of a genotype source to annotate. Returns (variants, parent artifact, genome build).
+
+    When the participant carrier table exists its sites are used: REF/ALT verified against the
+    reference FASTA and keyed chromosome:position:REF:ALT. Otherwise the standardized variant
+    table (QC-passing variants when QC has run; PLINK's provisional REF = A2)."""
+    from efgpp.data.genotype.carriers import carrier_dataset
+
+    carriers = carrier_dataset(project, source_id)
+    if carriers is not None and carriers[2].exists():
+        art, _root, sites = carriers
+        v = pl.read_parquet(sites).filter(pl.col("included"))
+        return v.select("chromosome", "position", "reference", "alternate", "variant_id", "variant_key",
+                        "rsid"), art, art.genome_build
     with Registry.open(project) as reg:
         store = ArtifactStore(reg)
         vt = store.latest(source_id=source_id, artifact_type="variant_table")
@@ -36,7 +47,20 @@ def cohort_variants(project: Project, source_id: str, qc_only: bool = True) -> t
     if vqc is not None:
         passing = pl.read_parquet(vqc.path).filter(pl.col("pass")).select("variant_id")
         variants = variants.join(passing, on="variant_id", how="semi")
-    return variants, vt, vt.genome_build
+    return with_variant_key(variants), vt, vt.genome_build
+
+
+def key_expr(chrom: str = "chromosome", pos: str = "position", ref: str = "reference",
+             alt: str = "alternate") -> pl.Expr:
+    """Canonical variant key chromosome:position:REF:ALT."""
+    return pl.concat_str([pl.col(chrom).cast(pl.Utf8).str.replace(r"^(?i)chr", ""), pl.col(pos).cast(pl.Utf8),
+                          pl.col(ref), pl.col(alt)], separator=":")
+
+
+def with_variant_key(df: pl.DataFrame) -> pl.DataFrame:
+    if "variant_key" in df.columns:
+        return df
+    return df.with_columns(key_expr().alias("variant_key"))
 
 
 def write_sites_vcf(variants: pl.DataFrame, path: Path, build: str | None) -> Path:
@@ -49,8 +73,10 @@ def write_sites_vcf(variants: pl.DataFrame, path: Path, build: str | None) -> Pa
         if build:
             fh.write(f"##reference={build}\n")
         fh.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
-        for chrom, pos, vid, ref, alt in v.select("chromosome", "position", "variant_id", "reference", "alternate").iter_rows():
-            fh.write(f"{chrom}\t{pos}\t{vid or '.'}\t{ref}\t{alt}\t.\t.\t.\n")
+        # ID = canonical variant key, so annotations join back to participants unambiguously
+        for chrom, pos, key, ref, alt in with_variant_key(v).select(
+                "chromosome", "position", "variant_key", "reference", "alternate").iter_rows():
+            fh.write(f"{chrom}\t{pos}\t{key}\t{ref}\t{alt}\t.\t.\t.\n")
     return path
 
 
@@ -145,6 +171,8 @@ def register_annotation(
     metadata: dict[str, Any] | None = None,
 ) -> str:
     out_dir = project.artifact_dir(Origin.DERIVED, Modality.VARIANT_ANNOTATIONS, source_id)
+    if "variant_key" not in table.columns and set(KEY) <= set(table.columns):
+        table = table.with_columns(key_expr().alias("variant_key"))
     out = write_parquet(table, out_dir / f"{source_id}_{name}.parquet", project.config.storage.compression)
     files = [out, *(extra_files or [])]
     with Registry.open(project) as reg:

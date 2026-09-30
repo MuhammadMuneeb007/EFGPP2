@@ -13,6 +13,7 @@ from efgpp.data.adapters.metabolomics import MetabolomicsAdapter
 from efgpp.data.adapters.methylation import MethylationAdapter
 from efgpp.data.adapters.phenotype import PhenotypeAdapter
 from efgpp.data.adapters.proteomics import ProteomicsAdapter
+from efgpp.data.adapters.splicing import SplicingAdapter
 
 ADAPTERS: dict[Modality, type[DataAdapter]] = {
     Modality.GENOTYPE: GenotypeAdapter,
@@ -22,6 +23,7 @@ ADAPTERS: dict[Modality, type[DataAdapter]] = {
     Modality.METHYLATION: MethylationAdapter,
     Modality.PROTEOMICS: ProteomicsAdapter,
     Modality.METABOLOMICS: MetabolomicsAdapter,
+    Modality.SPLICING: SplicingAdapter,
     Modality.CLINICAL: ClinicalAdapter,
 }
 

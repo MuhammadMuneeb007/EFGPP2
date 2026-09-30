@@ -488,6 +488,176 @@ study and target phenotypes are recorded with the artifact and in the data repor
 | Command | Effect |
 |---|---|
 | `efgpp resources enable vep clinvar alphamissense` (`--off` to disable) | sets `enabled: true` in `resources.yaml`; `efgpp data prepare` then annotates every genotype variant with these resources |
-| `efgpp data predict --tissue Whole_Blood [--tissue …] [--genotype GENO001]` (`--off`) | switches on PrediXcan in `data.yaml`; models installed with `efgpp resources install predictdb` are used automatically |
+| `efgpp data predict enable expression --tissue Whole_Blood [--tissue …]` (`--off`) | switches on predicted expression in `data.yaml` (see section 14 for every modality) |
+| `efgpp data variants enable [--spliceai]` | participant carrier variants, consequence counts and gene burden (section 14) |
 
 The full flow for one cohort, from installation to snapshot, is in `example1.md`.
+
+---
+
+## 14. Genotype-Derived Molecular Data
+
+Everything in this section is computed from the genotype and external, published models only.
+**No phenotype is read** (an automated test replaces every phenotype value and checks that all
+outputs are byte-identical). Origins are strict: carrier tables and burdens are `derived`;
+expression, splicing, protein, metabolite and methylation values are `predicted` (never
+`observed`, never `simulated`); the external models are `reference`.
+
+```text
+Participant genotype (GRCh38)
+        │  QC (PLINK 2)
+        ▼
+QC-passed genotype ─────────────────────────────┬───────────────────────────────┐
+        │                                       │                               │
+        ▼                                       ▼                               ▼
+participant carriers (ALT verified        external models (REFERENCE)      HIBAG (optional)
+against the GRCh38 FASTA)                 PredictDB · OmicsPred · MIMOSA         │
+        │                                       │                               ▼
+        ▼  annotate unique variants once        ▼  harmonize alleles, coverage QC   HLA types
+VEP · ClinVar · gnomAD · AlphaMissense    ┌──────┼───────────┬────────────┬────────────┐
+· SpliceAI                                ▼      ▼           ▼            ▼            ▼
+        │                             expression splicing  proteins   metabolites  methylation
+        ▼                             (PrediXcan (PrediXcan (OmicsPred / (OmicsPred) (MIMOSA,
+consequence counts · gene burden        GTEx v8)  GTEx v8)  PredictDB)               whole blood)
+```
+
+### 14.1 Participant carrier variants (`data/genotype/carriers.py`)
+
+| Step | How |
+|---|---|
+| counted allele | never assumed: PLINK A1/A2 are compared with the reference FASTA base. A2 = REF keeps the A1 count; A1 = REF gives ALT count = 2 − A1 count; strand flips are complemented; A/T and C/G sites are flagged; sites matching neither allele are excluded and counted (`ref_check` in `variants.parquet`). Without a FASTA the PLINK convention is used and every site is labelled `unverified`. |
+| dosages | imputed data (BGEN/VCF sources): PLINK 2 exports a VCF with `DS` (REF from the FASTA, `--ref-from-fa`), `bcftools norm -f <fasta> -m -any -c x` left-aligns, checks REF and splits multiallelics; hard call and dosage are kept separately, dosage is never rounded, INFO/R2 is kept |
+| ploidy | chrY/MT haploid; non-PAR chrX haploid for males (PLINK 23), PAR diploid (PLINK 25) |
+| key | `chromosome:position:REF:ALT` (rsID kept as metadata) |
+| storage | `data/derived/participant_variants/<GENO>/participant_variants/chromosome=<c>/part-0.parquet` (carrier rows only by default; `efgpp data variants enable --all-genotypes` keeps every call) + `variants.parquet` |
+| scale | `.bed` blocks decoded with NumPy (a few million cells at a time); strings are dictionary-encoded; nothing dense is kept |
+
+Columns: `participant_id, native_sample_id, variant_key, variant_id, rsid, chromosome, position,
+ref, alt, GT, hardcall_alt_count, dosage, ploidy, heterozygous, homozygous_alt, info_r2,
+genome_build, source_id`.
+
+### 14.2 Annotation and burdens (`data/genotype/consequences.py`)
+
+Unique cohort variants are annotated once (VEP `--offline --cache --assembly GRCh38 --symbol
+--canonical --biotype --variant_class --numbers --flag_pick --hgvs`, ClinVar, gnomAD,
+AlphaMissense, SpliceAI) and joined to the carriers with DuckDB.
+
+| Output | Content |
+|---|---|
+| `variant_annotation_table.parquet` | one row per variant: VEP PICK row (else canonical, else most severe consequence), gene, transcript, HGVSc/HGVSp, ClinVar significance/review status/condition, gnomAD AFs, AlphaMissense score/class, SpliceAI max score and effect |
+| `participant_annotated_variants/` | carrier rows + annotation (partitioned by chromosome) |
+| `participant_consequence_counts.parquet` | one row per participant: `n_variants_total`, `n_heterozygous`, `n_homozygous_alt`, `n_<consequence>` and `alt_burden_<consequence>` for every SO term (missense, synonymous, stop gained/lost, start lost, frameshift, inframe indels, splice acceptor/donor/region, UTRs, intron, intergenic, regulatory, …), `n_lof`, `n_splice`, `n_damaging_missense` (AlphaMissense ≥ 0.564), `n_clinvar_pathogenic`, `n_rare` (gnomAD AF < 0.01), `n_spliceai_ge_0_2/0_5/0_8` |
+| `participant_gene_burden.parquet` | long: participant × gene — `n_variants, n_alt_alleles, n_missense, n_lof, n_splice, n_damaging_missense, max_alphamissense, max_spliceai, min_gnomad_af` (+ `efgpp_weighted_burden` when `burden_weights` is set) |
+
+A variant overlapping five transcripts counts once (the picked consequence); the full transcript
+table stays in the VEP annotation. Burdens are **EFGPP-derived counts**, not a published model.
+
+### 14.3 Genetically predicted molecular data (`data/predicted/`)
+
+| Modality | Model resource (installed with) | Engine | Value |
+|---|---|---|---|
+| expression | GTEx v8 MASHR eQTL PredictDB, Zenodo 3518299 `mashr_eqtl.tar` (262 MB, MD5 87f3470b…) — `efgpp resources install predictdb-gtex-v8-expression` | PrediXcan (`metaxcan`) or `plink_score` | `genetically_predicted_expression` |
+| splicing | GTEx v8 MASHR sQTL PredictDB, Zenodo 3518299 `mashr_sqtl.tar` (669 MB, MD5 fa9167cf…) — `predictdb-gtex-v8-splicing` | same | `genetically_predicted_splicing` (intron ids kept) |
+| proteomics | OmicsPred datasets (`efgpp resources omicspred list --modality proteomics`, `install omicspred --dataset OPD…`); PredictDB protein models, Zenodo 4837327 (`predictdb-protein --dataset <file.db>`) | `generic_weights` (PLINK 2 `--score`) / `metaxcan` | `genetically_predicted_protein_score` |
+| metabolomics | OmicsPred datasets (Nightingale, Metabolon, …) | `generic_weights` | `genetically_predicted_metabolite_score` |
+| methylation | MIMOSA, Zenodo 8400313 `MIMOSA-Models.zip` (3.5 GB, MD5 2a4be3b8…) — `efgpp resources install mimosa` | `mimosa` (converted weights, PLINK 2 `--score`) | `genetically_predicted_methylation_score` (not a beta value) |
+| HLA (optional) | a published HIBAG classifier with its ancestry/platform/build/loci (`install hibag --url … --ancestry … --platform … --model-build … --loci …`) | HIBAG | imputed alleles + posterior probability |
+
+**Resources.** Zenodo files are resolved through the current record API (no stored download
+links; redirects such as 4837327 → 6536687 are followed), the published MD5 is checked and a
+SHA-256 recorded, downloads resume and go through `*.part`, and free disk space is checked first
+(downloads over 1 GB are announced). OmicsPred datasets are resolved through its REST API
+(`https://rest.omicspred.org/api`, catalogue cached with retrieval date and checksum), the GRCh38-
+harmonized scoring files are used, and published validation R² values are attached. MIMOSA's
+`.rds` files are exported by `mimosa_export.R` (base R) and the highest test-R² valid method is
+selected per CpG (ties: ElNet, MNet, SCAD, MCP, LASSO); models with R² ≤ 0.005 are kept but
+marked `below_threshold` and not scored. GoDMC/MIMOSA positions (GRCh37) are lifted to GRCh38 at
+installation (same chromosome, forward strand only). Raw files are kept in `raw/`, standardized
+weights in `standardized/`, under `resources/molecular_models/…`.
+
+**Standard weight schema** (every generic model): provider, provider_dataset_id, model_id,
+feature_id, feature_name, modality, chromosome, position, variant_id, ref, alt, effect_allele,
+other_allele, weight, genome_build, tissue, sample_type, platform, training_cohort,
+training_ancestry, training_n, validation_cohort, validation_ancestry, validation_r2,
+source_publication, model_version (unknown values stay null).
+
+**Harmonization** (`harmonize.py`): exact match, allele swap, strand flip, strand flip + swap;
+A/T and C/G variants are never strand-flipped (kept only for models whose alleles are known to be
+on the forward strand, i.e. PredictDB `chr_pos_REF_ALT` ids); multiallelic duplicates, duplicate
+model rows, missing variants and allele mismatches are counted per feature. Model and genotype
+builds must match — otherwise the unit stops and names the explicit fix (`efgpp data liftover`).
+PLINK counts the allele the model names, so no weight is sign-flipped.
+
+**Coverage.** `model_qc.parquet` holds, per feature: n_model_variants, n_matched_variants,
+n_missing_variants, n_exact_matches, n_allele_swaps, n_strand_flips, n_ambiguous_excluded,
+n_multiallelic_excluded, n_allele_mismatch, coverage_fraction, validation_r2, status
+(`OK` / `LOW_COVERAGE` / `NO_MATCH`) and ancestry_match_status (matched / mixed / partial /
+mismatched / unknown; reported, never used to reject). Below `minimum_variant_coverage` (0.50)
+a feature is not predicted unless `allow_low_coverage: true`.
+
+**Scoring** (`scorer.py`): `plink2 --score … header-read no-mean-imputation cols=+scoresums` on a
+keyed PGEN copy (unique `chr:pos:REF:ALT` ids, built once), features in batches with `--extract`,
+ALT-counted and REF-counted variants in separate score files. Without PLINK 2, `.bed` genotypes
+are scored with identical arithmetic in NumPy.
+
+**Outputs** per unit (`data/predicted/<modality>/<provider>/<tissue or dataset>/`):
+`predicted_<modality>.parquet` (participant × feature; long partitioned layout above 20 M cells),
+`model_qc.parquet`, `feature_metadata.parquet`, `manifest.yaml` (resource, checksums, software,
+configuration, limitation). Every model is also listed in the registry table `molecular_models`
+(frozen with snapshots). Each tissue/dataset is its own restartable step
+(`predict.<modality>.<unit>`); one failing unit never touches finished ones.
+
+**Observed vs predicted QC.** When both exist for a modality the report shows shared
+participants, shared features and per-feature correlations. Neither replaces the other.
+
+### 14.4 Commands
+
+```bash
+efgpp setup toolkit predicted-omics          # MetaXcan (pinned commit) + R for MIMOSA
+efgpp setup toolkit spliceai                 # SpliceAI + TensorFlow in its own environment
+efgpp setup toolkit hla                      # HIBAG (optional)
+efgpp resources install genome --build GRCh38
+efgpp resources install predictdb-gtex-v8-expression
+efgpp resources install predictdb-gtex-v8-splicing
+efgpp resources omicspred refresh
+efgpp resources omicspred list --modality proteomics
+efgpp resources install omicspred --dataset <OPD id>
+efgpp resources install mimosa
+efgpp data variants enable [--spliceai]      # carriers + annotation + counts + gene burden
+efgpp data predict enable expression --tissue Whole_Blood      # or --tissue all
+efgpp data predict enable splicing --tissue Whole_Blood
+efgpp data predict enable proteomics --dataset <OPD id>
+efgpp data predict enable metabolomics --dataset <OPD id>
+efgpp data predict enable methylation
+efgpp data predict plan                      # what is ready / missing; nothing is computed
+efgpp data prepare                           # or: efgpp data variants run / efgpp data predict all
+```
+
+Software (`efgpp setup …`) and model data (`efgpp resources install …`) are always separate;
+after both are installed, prediction needs no network.
+
+### 14.5 Scientific limitations
+
+- **Expression**: PrediXcan predicts the genetically regulated component of expression; it is not RNA-seq.
+- **Splicing**: sQTL models give genetically predicted splicing traits, not splice-junction measurements.
+- **Protein**: protein genetic scores are the genetically predictable component, not measured plasma concentrations.
+- **Metabolite**: metabolite genetic scores are the genetically predictable component, not measured metabolomics.
+- **Methylation**: MIMOSA estimates the genetically predictable whole-blood methylation component — not a measured beta value, and not brain, liver or tumour methylation.
+- **SpliceAI** predicts variant-level splice disruption; it is not GTEx sQTL-predicted participant splicing. Its trained models are CC BY-NC 4.0 (non-commercial).
+- A feature without a published model cannot be predicted (it is simply absent); nothing is trained, simulated or substituted.
+- Genotyping arrays only see the probed positions: carrier counts describe those sites, not every mutation a person carries.
+- Clinical measurements, diagnoses or medications are never predicted in the Data layer.
+
+### 14.6 Validation status
+
+| Part | Status |
+|---|---|
+| carriers, REF/ALT orientation, haploid calls, dosages, carrier-only storage | unit tests (REF=A/ALT=G in both PLINK orientations) |
+| consequence counts, PICK/no double counting, gene burden | unit tests on the specification's demonstration cohort |
+| harmonization (swap, flip, ambiguous, missing, multiallelic), coverage, build mismatch | unit tests |
+| expression/splicing (tiny PredictDB DBs), protein/metabolite/methylation weighted sums | exact values tested (Python scorer); `plink2 --score` command tested, not executed here |
+| MetaXcan engine | end to end with a stubbed Predict.py |
+| phenotype independence + snapshot | integration test (outputs byte-identical after flipping every phenotype) |
+| Zenodo records 3518299 / 8400313 / 4837327, OmicsPred API | resolved and checksums verified against the live services; OmicsPred dataset OPD000003 and GTEx v8 expression models installed and parsed for real |
+| conda environments (metaxcan, methylation, spliceai, hla) | solved for linux-64 (dry run); not installed here |
+| MIMOSA R export, HIBAG, SpliceAI, PLINK 2 scoring | written against the upstream code/documentation; run on Linux first |

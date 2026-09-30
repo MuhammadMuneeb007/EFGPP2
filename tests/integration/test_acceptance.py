@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 import polars as pl
@@ -81,8 +80,22 @@ def test_E_genotype_phenotype_measured_expression(project: Project, cohort_dir: 
     assert inter["GENO001 + RNA001_OBSERVED"] == 60
 
 
+def _predictdb_from_cohort(cohort_dir: Path, db: Path) -> list[tuple[str, int, str, str, float]]:
+    """A tiny PredictDB model on three cohort variants (ids chr_pos_A2_A1_b38: A2 = REF, A1 = effect)."""
+    from tests.unit._genotypes import write_predictdb
+
+    bim = pl.read_csv(cohort_dir / "genotype" / "cohort.bim", separator="\t", has_header=False,
+                      new_columns=["chrom", "id", "cm", "pos", "a1", "a2"], infer_schema=False).head(3)
+    rows = [(r["chrom"], int(r["pos"]), r["a2"], r["a1"], w) for r, w in zip(bim.to_dicts(), (0.5, -0.2, 0.1),
+                                                                            strict=True)]
+    write_predictdb(db, [("ENSG01", f"rs{i}", f"chr{c}_{pos}_{ref}_{alt}_b38", ref, alt, w)
+                         for i, (c, pos, ref, alt, w) in enumerate(rows)])
+    return rows
+
+
 def test_F_genotype_phenotype_predicted_expression(project: Project, cohort_dir: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    from efgpp.data.predicted import metaxcan
+    from efgpp.data import provenance
+    from efgpp.data.predicted import engine, metaxcan
     from efgpp.data.provenance import RunRecord
 
     p = add_phenotypes(add_genotype(project, cohort_dir), cohort_dir, ["trait_a"])
@@ -90,15 +103,13 @@ def test_F_genotype_phenotype_predicted_expression(project: Project, cohort_dir:
     p.data.predicted.expression.tissues = ["Whole_Blood"]
     p.save_data_config()
     p = Project.load(p.root)
-    model = p.resource_root / "predictdb" / "mashr_Whole_Blood.db"
-    con = sqlite3.connect(model)
-    con.execute("CREATE TABLE extra (gene TEXT)")
-    con.commit()
-    con.close()
-    _run(p)
     step = next(s for s in build_plan(p) if s.id == "predict.expression.Whole_Blood")
-    assert not step.enabled and "not installed" in (step.reason or "")  # tools absent: reported, not run
-
+    assert not step.enabled and "not installed" in (step.reason or "")  # model missing: reported, not run
+    _predictdb_from_cohort(cohort_dir, p.resource_root / "my_models" / "mashr_Whole_Blood.db")
+    p.data.predicted.expression.model_provider.models_dir = str(p.resource_root / "my_models")
+    p.save_data_config()
+    p = Project.load(p.root)
+    _run(p)
     samples = pl.read_csv(cohort_dir / "genotype" / "cohort.fam", separator="\t", has_header=False).get_column("column_2").cast(pl.Utf8)
 
     def fake_convert(project: Project, artifact_id: str, target: str, **_kw):  # type: ignore[no-untyped-def]
@@ -110,23 +121,56 @@ def test_F_genotype_phenotype_predicted_expression(project: Project, cohort_dir:
 
     def fake_run_tool(project: Project, tool: str, args: list[str], **_kw) -> RunRecord:  # type: ignore[no-untyped-def]
         pred = Path(args[args.index("--prediction_output") + 1])
-        pl.DataFrame({"FID": samples, "IID": samples, "ENSG01": [0.1] * len(samples),
-                      "ENSG02": [0.2] * len(samples)}).write_csv(pred, separator="\t")
+        pl.DataFrame({"FID": samples, "IID": samples, "ENSG01": [0.1] * len(samples)}).write_csv(pred, separator="\t")
         Path(args[args.index("--prediction_summary_output") + 1]).write_text("gene\tn_snps_used\nENSG01\t3\n")
         return RunRecord("RUN999999", None, tool, "test", [tool, *args], exit_code=0, status="completed")
 
     monkeypatch.setattr(metaxcan, "convert", fake_convert)
-    monkeypatch.setattr(metaxcan, "run_tool", fake_run_tool)
-    art_id = metaxcan.run_prediction(p, Modality.EXPRESSION, "Whole_Blood")
+    monkeypatch.setattr(provenance, "run_tool", fake_run_tool)
+    out = engine.run_unit(p, Modality.EXPRESSION, "Whole_Blood")
     with Registry.open(p) as reg:
-        art = ArtifactStore(reg).get(art_id)
-    assert art.origin == Origin.PREDICTED and art.tissue == "Whole_Blood"
+        art = ArtifactStore(reg).get(out["artifact"])
+        n_models = reg.scalar("SELECT count(*) FROM molecular_models WHERE modality = 'expression'")
+    assert art.origin == Origin.PREDICTED and art.tissue == "Whole_Blood" and n_models == 1
     assert art.temporal_type is not None and art.temporal_type.value == "genetically_predicted_static"
-    assert Path(art.path).is_relative_to(p.data_root / "predicted" / "expression")
+    out_dir = p.data_root / "predicted" / "expression" / "gtex_v8" / "Whole_Blood"
+    assert Path(art.path) == out_dir / "predicted_expression.parquet"
+    assert {f.name for f in out_dir.iterdir()} >= {"model_qc.parquet", "feature_metadata.parquet", "manifest.yaml"}
+    qc = pl.read_parquet(out_dir / "model_qc.parquet")
+    assert qc.select("n_model_variants", "n_matched_variants", "status").row(0) == (3, 3, "OK")
+    manifest = (out_dir / "manifest.yaml").read_text(encoding="utf-8")
+    assert "genetically_predicted_expression" in manifest and "not RNA-seq" in manifest
     av = availability.build(p)
-    col = av.columns.filter(pl.col("column") == "PRED_EXPRESSION_Whole_Blood").to_dicts()[0]
+    col = av.columns.filter(pl.col("column") == "PRED_EXPRESSION_gtex_v8_Whole_Blood").to_dicts()[0]
     assert col["origin"] == "predicted" and col["participants"] == 120
     assert not any(c.endswith("_OBSERVED") for c in av.column_names())  # never reported as measured
+
+
+def test_F2_generic_weights_scored_exactly_on_the_cohort(project: Project, cohort_dir: Path) -> None:
+    """plink_score engine (Python backend without PLINK 2): exact weighted sums per participant."""
+    from efgpp.data.predicted import engine
+
+    p = add_genotype(project, cohort_dir)
+    rows = _predictdb_from_cohort(cohort_dir, p.resource_root / "my_models" / "mashr_Whole_Blood.db")
+    cfg = p.data.predicted.expression
+    cfg.enabled, cfg.tissues, cfg.engine = True, ["Whole_Blood"], "plink_score"
+    cfg.model_provider.models_dir = str(p.resource_root / "my_models")
+    p.save_data_config()
+    p = Project.load(p.root)
+    _run(p)
+    engine.run_unit(p, Modality.EXPRESSION, "Whole_Blood")
+    got = pl.read_parquet(p.data_root / "predicted" / "expression" / "gtex_v8" / "Whole_Blood" /
+                          "predicted_expression.parquet").sort("native_id")
+    # expected: sum of A1 (effect allele) counts x weight, read straight from the .bed
+    from efgpp.data.genotype.carriers import iter_bed
+
+    fam = pl.read_csv(cohort_dir / "genotype" / "cohort.fam", separator="\t", has_header=False)
+    _, a1 = next(iter_bed(cohort_dir / "genotype" / "cohort.bed", fam.height, 3, 3))
+    import numpy as np
+
+    expected = (np.where(a1 < 0, 0, a1).T * np.array([w for *_x, w in rows])).sum(axis=1)
+    by_iid = dict(zip(fam.get_column("column_2").cast(pl.Utf8).to_list(), expected.tolist(), strict=True))
+    assert all(abs(v - by_iid[i]) < 1e-9 for i, v in got.select("native_id", "ENSG01").iter_rows())
 
 
 def test_G_longitudinal_expression(project: Project, cohort_dir: Path) -> None:

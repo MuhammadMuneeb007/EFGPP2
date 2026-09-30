@@ -90,15 +90,15 @@ def run_builtin(project: Project, steps: list[Step], *, cores: int, force: bool 
 
 
 def prepare(project: Project, *, kinds: set[str] | None = None, cores: int | None = None,
-            engine: str | None = None, force: bool = False,
+            engine: str | None = None, force: bool = False, ids: set[str] | None = None,
             dry_run: bool = False, console: Console | None = None) -> list[StepOutcome]:
-    """Plan and execute. `kinds` restricts to some step kinds (plus their dependencies)."""
+    """Plan and execute. `kinds` / `ids` restrict to some steps (plus their dependencies)."""
     console = console or Console()
     cores = cores or project.config.execution.local_cores
     ensure_simulation(project, console)
     steps = build_plan(project)
     write_plan(project, steps)
-    chosen = select(steps, kinds) if kinds else steps
+    chosen = select(steps, kinds, ids) if (kinds or ids) else steps
     if dry_run:
         return [StepOutcome(s.id, "planned" if s.enabled else "disabled", detail=s.reason) for s in chosen]
     return run_builtin(project, chosen, cores=cores, force=force, console=console)

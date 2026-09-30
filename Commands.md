@@ -54,6 +54,21 @@ efgpp setup toolkit all                          # everything below in one go
 # ---------------------------------------------------------------------------
 efgpp resources install genome --build GRCh38
 efgpp resources install vep --build GRCh38       # VEP cache (large, one time)
+efgpp resources install clinvar
+efgpp resources install alphamissense
+
+# ---------------------------------------------------------------------------
+# 5b. Genotype-derived molecular data: software, then model resources
+# ---------------------------------------------------------------------------
+efgpp setup toolkit predicted-omics              # MetaXcan (pinned) + R for MIMOSA
+efgpp setup toolkit spliceai                     # SpliceAI + TensorFlow (own env)
+# efgpp setup toolkit hla                        # HIBAG (optional)
+efgpp resources install predictdb-gtex-v8-expression   # ~262 MB
+efgpp resources install predictdb-gtex-v8-splicing     # ~669 MB
+efgpp resources omicspred refresh
+efgpp resources omicspred list --modality proteomics   # choose a dataset id
+# efgpp resources install omicspred --dataset <OPD id>
+efgpp resources install mimosa                         # ~3.5 GB archive
 efgpp resources list
 
 # ---------------------------------------------------------------------------

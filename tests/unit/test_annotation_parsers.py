@@ -30,7 +30,8 @@ def test_vep_tab_parsing(tmp_path: Path) -> None:
 
 def test_sites_vcf(tmp_path: Path) -> None:
     text = write_sites_vcf(VARIANTS, tmp_path / "s.vcf", "GRCh38").read_text()
-    assert "##reference=GRCh38" in text and "1\t100\ta\tA\tG" in text
+    # ID column = canonical variant key, so annotations join back to participants
+    assert "##reference=GRCh38" in text and "1\t100\t1:100:A:G\tA\tG" in text
 
 
 def test_clinvar_style_lookup(tmp_path: Path) -> None:

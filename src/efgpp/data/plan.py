@@ -105,7 +105,27 @@ def build_plan(project: Project) -> list[Step]:
                 steps.append(_gated_after(qc, _tool_gate(project, Step(
                     f"ancestry.{source.id}", "ancestry", "pca", "ancestry by reference-panel projection",
                     needs=[qc.id], tools=["plink2"], env="genetics", threads=cores, source_id=source.id))))
-            steps += _annotation_steps(project, source.id, qc if qc.enabled else std)
+            upstream = qc if qc.enabled else std
+            pv_cfg = data.participant_variants
+            wants_pv = pv_cfg.enabled and pv_cfg.genotype_artifact in (None, source.id)
+            if wants_pv:
+                pv = _gated_after(qc, _tool_gate(project, Step(
+                    f"participant_variants.{source.id}", "participant_variants", "genotype_qc",
+                    "participant carrier genotypes (ALT verified against the reference FASTA)",
+                    needs=[qc.id], tools=["plink2"], env="genetics", threads=cores, mem_mb=16000, runtime_min=240,
+                    source_id=source.id)))
+                steps.append(pv)
+                upstream = pv
+            ann = _annotation_steps(project, source.id, upstream)
+            steps += ann
+            if wants_pv:
+                steps.append(_gated_after(upstream, Step(
+                    f"consequences.{source.id}", "consequences", "annotation",
+                    "participant consequence counts and gene burden (EFGPP-derived)",
+                    needs=[upstream.id, *(a.id for a in ann if a.enabled)], mem_mb=16000, runtime_min=120,
+                    source_id=source.id)))
+            if data.hla.enabled and data.hla.genotype_artifact in (None, source.id):
+                steps.append(_hla_step(project, source.id, qc))
         else:
             steps.append(Step(f"qc.{source.id}", "qc", "prepare", f"profile and QC {modality.value} {source.id}",
                               needs=[std.id], source_id=source.id))
@@ -120,21 +140,24 @@ def build_plan(project: Project) -> list[Step]:
     for modality, cfg in data.predicted.items():
         if not cfg.enabled:
             continue
+        from efgpp.data.predicted.engine import plan_units
+
         gid = cfg.genotype_artifact or (data.observed.genotype[0].id if data.observed.genotype else None)
-        for tissue in cfg.tissues:
-            step = Step(f"predict.{modality.value}.{tissue}", "predict", "expression_prediction",
-                        f"PrediXcan predicted {modality.value} ({tissue})",
+        for unit in plan_units(project, modality, cfg):
+            tools = ["plink2", "predixcan"] if unit.engine == "metaxcan" else ["plink2"]
+            step = Step(unit.step_id, f"predict_{modality.value}", "prediction",
+                        f"genetically predicted {modality.value} ({unit.provider} {unit.key}, {unit.engine})",
                         needs=[genotype_qc_steps.get(gid, f"standardize.{gid}")] if gid else ["validate"],
-                        tools=["plink2", "predixcan"], env="metaxcan", threads=1, mem_mb=8000,
-                        runtime_min=240, source_id=gid, params={"modality": modality.value, "tissue": tissue})
+                        tools=tools, env="metaxcan" if unit.engine == "metaxcan" else "genetics", threads=1,
+                        mem_mb=8000, runtime_min=240, source_id=gid,
+                        params={"modality": modality.value, "unit": unit.key})
             if gid is None:
                 step.enabled, step.reason = False, "no genotype source for prediction"
+            elif unit.reason:
+                step.enabled = False
+                step.reason = unit.reason + (f" ({unit.required})" if unit.required else "")
             else:
                 _tool_gate(project, step)
-                from efgpp.data.predicted.metaxcan import model_path
-
-                if step.enabled and not model_path(project, cfg, tissue).exists():
-                    step.enabled, step.reason = False, f"PredictDB model for {tissue} not found"
                 if gid in genotype_qc_steps:
                     qc_step = next(s for s in steps if s.id == genotype_qc_steps[gid])
                     _gated_after(qc_step, step)
@@ -153,14 +176,32 @@ def _gated_after(upstream: Step, step: Step) -> Step:
     return step
 
 
+def _hla_step(project: Project, source_id: str, qc: Step) -> Step:
+    from efgpp.data.derived_hla import hla_ready
+
+    step = _gated_after(qc, Step(f"hla.{source_id}", "hla", "prediction", "HLA imputation (HIBAG)",
+                                 needs=[qc.id], env="hla", mem_mb=16000, runtime_min=240, source_id=source_id))
+    problem = hla_ready(project)
+    if step.enabled and problem:
+        step.enabled, step.reason = False, problem
+    return step
+
+
 def _annotation_steps(project: Project, source_id: str, upstream: Step) -> list[Step]:
     r = project.resources
+    pv = project.data.participant_variants
+    wanted = pv.annotations if pv.enabled else None
+
+    def on(name: str) -> bool:
+        return bool(getattr(r, name).enabled or (wanted is not None and getattr(wanted, name, False)))
+
     specs = [
-        ("vep", r.vep.enabled, ["vep"], "annotation", "Ensembl VEP consequences", None),
+        ("vep", on("vep"), ["vep"], "annotation", "Ensembl VEP consequences", None),
         ("opencravat", r.opencravat.enabled, ["oc"], "annotation", "OpenCRAVAT annotation", None),
-        ("clinvar", r.clinvar.enabled, [], "core", "ClinVar significance", "clinvar"),
-        ("alphamissense", r.alphamissense.enabled, [], "core", "AlphaMissense scores", "alphamissense"),
-        ("gnomad", r.gnomad.enabled, [], "core", "gnomAD allele frequencies", "gnomad"),
+        ("clinvar", on("clinvar"), [], "core", "ClinVar significance", "clinvar"),
+        ("alphamissense", on("alphamissense"), [], "core", "AlphaMissense scores", "alphamissense"),
+        ("gnomad", on("gnomad"), [], "core", "gnomAD allele frequencies", "gnomad"),
+        ("spliceai", on("spliceai"), ["spliceai"], "spliceai", "SpliceAI splice-disruption scores", None),
         ("dbsnp", r.dbsnp.enabled, [], "core", "dbSNP rsIDs", "dbsnp"),
         ("alphagenome", r.alphagenome.enabled, [], "core", "AlphaGenome regulatory scores", None),
     ]
@@ -175,7 +216,13 @@ def _annotation_steps(project: Project, source_id: str, upstream: Step) -> list[
         cfg = getattr(r, name)
         if step.enabled and resource and not (cfg.path or _resource_installed(project, resource)):
             step.enabled, step.reason = False, f"{resource} not installed (efgpp resources install {resource})"
-        if step.enabled and name == "vep" and r.vep.cache == "auto" and not any((project.resource_root / "vep").iterdir()):
+        if step.enabled and name == "spliceai":
+            from efgpp.data.references.genome import installed_fasta
+
+            if installed_fasta(project) is None:
+                step.enabled, step.reason = False, "reference FASTA missing (efgpp resources install genome)"
+        vep_dir = project.resource_root / "vep"
+        if step.enabled and name == "vep" and r.vep.cache == "auto" and not (vep_dir.exists() and any(vep_dir.iterdir())):
             step.enabled, step.reason = False, "VEP cache missing (efgpp resources install vep)"
         if step.enabled and name == "alphagenome":
             from efgpp.data.annotation.alphagenome import api_key
@@ -265,11 +312,24 @@ def run_step(project: Project, step: Step, threads: int | None = None) -> dict[s
         result["artifact"] = run_ancestry(project, step.source_id, step_id=step.id, threads=threads)  # type: ignore[arg-type]
     elif kind.startswith("annotate_"):
         result["artifact"] = _annotate(project, step, threads)
-    elif kind == "predict":
-        from efgpp.data.predicted.metaxcan import run_prediction
+    elif kind.startswith("predict_"):
+        from efgpp.data.predicted.engine import run_unit
 
-        result["artifact"] = run_prediction(project, Modality(step.params["modality"]), step.params["tissue"],
-                                            step_id=step.id, threads=threads)
+        result.update(run_unit(project, Modality(step.params["modality"]), step.params["unit"], step_id=step.id,
+                               threads=threads))
+    elif kind == "participant_variants":
+        from efgpp.data.genotype.carriers import run_participant_variants
+
+        result.update(run_participant_variants(project, step.source_id, step_id=step.id,  # type: ignore[arg-type]
+                                               threads=threads))
+    elif kind == "consequences":
+        from efgpp.data.genotype.consequences import run_consequences
+
+        result.update(run_consequences(project, step.source_id, step_id=step.id, threads=threads))  # type: ignore[arg-type]
+    elif kind == "hla":
+        from efgpp.data.derived_hla import run_hla
+
+        result.update(run_hla(project, step.source_id, step_id=step.id, threads=threads))  # type: ignore[arg-type]
     elif kind == "availability":
         from efgpp.data import availability
 
@@ -301,6 +361,8 @@ def _annotate(project: Project, step: Step, threads: int) -> str:
         from efgpp.data.annotation.gnomad import run_dbsnp as fn
     elif name == "alphagenome":
         from efgpp.data.annotation.alphagenome import run_alphagenome as fn
+    elif name == "spliceai":
+        from efgpp.data.annotation.spliceai import run_spliceai as fn
     else:
         raise ValueError(name)
     return fn(project, sid, step_id=step.id, threads=threads)  # type: ignore[arg-type]

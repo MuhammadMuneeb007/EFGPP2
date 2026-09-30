@@ -78,7 +78,9 @@ def _register(project: Project, fetched: FetchedResource, dest: Path, local: Pat
     return manifest
 
 
-def install(project: Project, name: str, *, build: str | None = None, force: bool = False) -> InstallResult:
+def install(project: Project, name: str, *, build: str | None = None, force: bool = False,
+            **options: Any) -> InstallResult:
+    """Install a reference resource. `options` are provider-specific (e.g. dataset=, url=, progress=)."""
     from efgpp.data.snapshots import protected_resource_paths
 
     target_build = project.config.defaults.target_build
@@ -92,6 +94,7 @@ def install(project: Project, name: str, *, build: str | None = None, force: boo
     if name not in PROVIDERS:
         raise KeyError(f"no provider for {name!r}; available: {', '.join(sorted(PROVIDERS))}")
     provider = PROVIDERS[name](project)
+    provider.options = options  # type: ignore[attr-defined]
     staging = project.path(".efgpp", "downloads", f"{name}-{datetime.now(UTC):%Y%m%d%H%M%S}")
     staging.mkdir(parents=True, exist_ok=True)
     try:
@@ -110,6 +113,10 @@ def install(project: Project, name: str, *, build: str | None = None, force: boo
         for f in fetched.files:
             target = dest / f.relative_to(staging) if f.is_relative_to(staging) else dest / f.name
             target.parent.mkdir(parents=True, exist_ok=True)
+            if target.is_dir() and not target.is_symlink():
+                shutil.rmtree(target)
+            elif target.exists():
+                target.unlink()
             shutil.move(str(f), target)
         local = dest / fetched.local_path.relative_to(staging) if fetched.local_path.is_relative_to(staging) else dest
         _register(project, fetched, dest, local)

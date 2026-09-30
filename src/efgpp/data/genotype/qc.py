@@ -71,7 +71,7 @@ def load_genotype_input(project: Project, source_id: str) -> GenotypeInput:
     samples = read_samples(fs)
     sid = src.sample_id  # type: ignore[attr-defined]
     samples = samples.with_columns(plink_native_ids(samples, sid.mode, sid.column, sid.separator))
-    samples = samples.join(aliases, on="native_id", how="left")
+    samples = samples.join(aliases, on="native_id", how="left", maintain_order="left")
     return GenotypeInput(source_id, fs, samples, art.genome_build, art.artifact_id)  # type: ignore[arg-type]
 
 

@@ -142,8 +142,23 @@ def test_resources_enable(project: Project, run_cli, monkeypatch) -> None:  # ty
 
 def test_data_predict_switch(project: Project, run_cli, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.chdir(project.root)
-    run_cli("data", "predict", "--tissue", "Whole_Blood", "--tissue", "Brain_Cortex")
+    run_cli("data", "predict", "enable", "expression", "--tissue", "Whole_Blood", "--tissue", "Brain_Cortex")
     cfg = Project.load(project.root).data.predicted.expression
-    assert cfg.enabled and cfg.tissues == ["Whole_Blood", "Brain_Cortex"]
-    run_cli("data", "predict", "--tissue", "Whole_Blood", "--off")
+    assert cfg.enabled and cfg.tissues == ["Whole_Blood", "Brain_Cortex"] and cfg.engine == "metaxcan"
+    run_cli("data", "predict", "enable", "proteomics", "--dataset", "OPD000001")
+    prot = Project.load(project.root).data.predicted.proteomics
+    assert prot.enabled and prot.datasets == ["OPD000001"] and prot.provider == "omicspred"
+    # a methylation engine that makes no sense is refused
+    assert run_cli("data", "predict", "enable", "methylation", "--engine", "metaxcan", expect=2).exit_code == 2
+    assert "plan" in run_cli("data", "predict", "plan").output
+    from efgpp.data.predicted.engine import prediction_plan
+
+    rows = {r.item: r for r in prediction_plan(Project.load(project.root))}
+    assert rows["Predicted expression [Whole_Blood]"].status == "NOT INSTALLED"
+    assert "predictdb-gtex-v8-expression" in rows["Predicted expression [Whole_Blood]"].required
+    assert rows["Predicted proteomics [OPD000001]"].required == "efgpp resources install omicspred --dataset OPD000001"
+    run_cli("data", "predict", "enable", "expression", "--off")
     assert not Project.load(project.root).data.predicted.expression.enabled
+    run_cli("data", "variants", "enable", "--spliceai")
+    pv = Project.load(project.root).data.participant_variants
+    assert pv.enabled and pv.carrier_only and pv.annotations.spliceai

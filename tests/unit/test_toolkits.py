@@ -79,3 +79,17 @@ def test_check_reports_missing_items(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert not res.ok and res.items[0].kind == "conda" and res.items[0].status == "missing"
     (tmp_path / "proj" / "envs" / "simulation" / "conda-meta").mkdir(parents=True)
     assert ti.check_toolkit(None, "simulation").ok
+
+
+def test_genotype_derived_toolkits() -> None:
+    from efgpp.setup.installers import CONDA_TOOLS
+    from efgpp.setup.toolkits import TOOLKITS, resolve_names
+
+    assert resolve_names(["predicted-omics"]) == ["metaxcan", "methylation"]
+    assert TOOLKITS["metaxcan"].tools == ["predixcan", "plink2"] and TOOLKITS["spliceai"].tools == ["spliceai"]
+    assert "bioconductor-hibag" in TOOLKITS["hla"].conda and "HIBAG" in TOOLKITS["hla"].r_bioc
+    assert "r-bedmatrix" in TOOLKITS["methylation"].conda
+    env, conda, pip, _ = CONDA_TOOLS["spliceai"]
+    assert env == "spliceai" and "tensorflow>=2.10,<2.16" in conda  # TensorFlow only in its own environment
+    env, conda, pip, _ = CONDA_TOOLS["predixcan"]
+    assert "python=3.11" in conda and {"sqlalchemy", "patsy"} <= set(conda) and "bgen-reader" in pip

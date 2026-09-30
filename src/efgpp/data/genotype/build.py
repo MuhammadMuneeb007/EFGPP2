@@ -162,6 +162,27 @@ class FastaIndex:
                 out.append(fh.read(1).decode())
         return "".join(out).upper()
 
+    def bases_many(self, chrom: str, positions: list[int], lengths: list[int]) -> list[str | None]:
+        """Reference sequence at many (1-based position, length) sites of one chromosome (memory-mapped)."""
+        import mmap
+
+        entry = self.index.get(normalize_chrom(chrom))
+        if entry is None:
+            return [None] * len(positions)
+        length, offset, bases, width = entry
+        out: list[str | None] = []
+        with open(self.fasta, "rb") as fh, mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+            for pos, n in zip(positions, lengths, strict=True):
+                if pos < 1 or pos + n - 1 > length:
+                    out.append(None)
+                    continue
+                seq = bytearray()
+                for p in range(pos - 1, pos - 1 + n):
+                    i = offset + (p // bases) * width + p % bases
+                    seq += mm[i:i + 1]
+                out.append(seq.decode().upper())
+        return out
+
 
 def build_fai(fasta: Path) -> Path:
     """Create a samtools-compatible .fai for an uncompressed FASTA."""

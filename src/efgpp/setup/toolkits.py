@@ -13,6 +13,11 @@ repositories, direct downloads, exposed commands). `efgpp setup toolkit <name>` 
     prs-python  Python 3.10 environment for PRScs/PRScsx/PRSbils/LDpred/VIPRS/PolyFun/Hail
     prs-py27    Python 2.7 environment for LDSC, AnnoPred, PleioPred
     simulation  simuPOP, msprime, tskit, stdpopsim
+    metaxcan    MetaXcan / PrediXcan (individual-level, Python 3) pinned to a resolved commit
+    methylation R >= 4.3 with data.table, dplyr, optparse, BEDMatrix (MIMOSA model conversion)
+    spliceai    SpliceAI (Illumina) with TensorFlow, in its own environment
+    hla         HIBAG + SNPRelate, gdsfmt, SeqArray (Bioconductor, via conda / BiocManager)
+    predicted-omics = metaxcan + methylation (+ PLINK 2 for generic scores); models are resources
 
 The package lists mirror what PRSTools needs (see Document.MD). Toolkits are phenotype-
 independent infrastructure; running PRS methods belongs to the Representation layer.
@@ -65,6 +70,7 @@ class Toolkit:
     expose: list[str] = field(default_factory=list)  # env executables linked into <root>/bin
     checks: list[str] = field(default_factory=list)  # commands that must resolve afterwards
     requires: list[str] = field(default_factory=list)  # other toolkits installed first
+    tools: list[str] = field(default_factory=list)  # data-layer tools (own conda env each) installed with it
 
 
 R_BUILD_TOOLS = ["c-compiler", "cxx-compiler", "fortran-compiler", "make", "pkg-config", "gsl", "zlib"]
@@ -156,7 +162,32 @@ TOOLKITS: dict[str, Toolkit] = {t.name: t for t in (
     ),
 )}
 
-ALIASES = {"all": ["perl", "r", "prs-python", "prs-py27", "prs", "simulation"], "ldpred2": ["r"]}
+TOOLKITS.update({t.name: t for t in (
+    Toolkit(
+        "metaxcan", "MetaXcan / PrediXcan (individual-level prediction, Python 3; never S-PrediXcan here)",
+        tools=["predixcan", "plink2"],
+    ),
+    Toolkit(
+        "methylation", "R for MIMOSA model conversion (weights are converted once; no MWAS stack needed)",
+        env="methylation",
+        conda=["r-base>=4.3", "r-data.table", "r-dplyr", "r-optparse", "r-bedmatrix"],
+        checks=[],
+    ),
+    Toolkit(
+        "spliceai", "SpliceAI (Illumina) + TensorFlow in software/envs/spliceai (models CC BY-NC 4.0)",
+        tools=["spliceai"],
+    ),
+    Toolkit(
+        "hla", "HIBAG HLA imputation (Bioconductor) with SNPRelate, gdsfmt, SeqArray",
+        env="hla",
+        conda=["r-base>=4.3", "r-biocmanager", "bioconductor-hibag", "bioconductor-snprelate",
+               "bioconductor-gdsfmt", "bioconductor-seqarray"],
+        r_bioc=["HIBAG", "SNPRelate", "gdsfmt", "SeqArray"],
+    ),
+)})
+
+ALIASES = {"all": ["perl", "r", "prs-python", "prs-py27", "prs", "simulation"], "ldpred2": ["r"],
+           "predicted-omics": ["metaxcan", "methylation"]}
 
 
 def resolve_names(names: list[str]) -> list[str]:

@@ -17,6 +17,24 @@ CHAIN_URLS = {
 }
 
 
+def installed_fasta(project: Any) -> Path | None:
+    """The project's reference FASTA: resources.genome.fasta, else the installed genome resource."""
+    cfg = project.resources.genome
+    if cfg.fasta:
+        p = project.resolve(cfg.fasta)
+        return p if p.exists() else None
+    from efgpp.data.registry import Registry
+
+    with Registry.open(project) as reg:
+        row = reg.one("SELECT local_path, genome_build FROM resources WHERE name = 'genome' "
+                      "ORDER BY download_date DESC LIMIT 1")
+    if row and row["local_path"] and row["genome_build"] in (None, project.config.defaults.target_build):
+        p = project.resolve(row["local_path"])
+        if p.is_file():
+            return p
+    return None
+
+
 class GenomeProvider(ReferenceProvider):
     name = "genome"
     license = "UCSC Genome Browser data: free for academic, non-profit and commercial use"

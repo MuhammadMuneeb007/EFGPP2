@@ -14,6 +14,7 @@ from typing import Any
 
 import numpy as np
 import polars as pl
+import yaml
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from efgpp import __version__
@@ -287,14 +288,55 @@ class ReportBuilder:
         return out
 
     def predicted_section(self) -> Section:
-        s = Section("predicted", "16. Predicted modalities", intro="Genetically predicted molecular traits (origin: predicted). They are not measurements.")
-        rows = [{"artifact": a.artifact_id, "modality": str(a.modality), "tissue": a.tissue, "participants": a.participant_count,
-                 "features": a.feature_count, "tool": a.tool, "models": a.resource_versions.get("predictdb")}
-                for a in self.store.find(origin="predicted")]
+        s = Section("genotype_derived", "16. Genotype-Derived Molecular Representations",
+                    intro="Derived from the genotype only (no phenotype is read): participant carrier variants, "
+                          "consequence and gene burdens (origin: derived) and genetically predicted expression, "
+                          "splicing, proteins, metabolites and methylation (origin: predicted). Predicted values "
+                          "are genetically predicted components, not measurements.")
+        for a in self.store.find(artifact_type="participant_variants"):
+            md = a.metadata
+            s.tables.append(_table(f"{a.source_id}: participant carrier table", [{
+                "participants": a.participant_count, "variants": a.feature_count, "carrier rows": md.get("carrier_rows"),
+                "counted allele": md.get("counted_allele"), "REF check": json.dumps(md.get("ref_check")),
+                "dosage": md.get("dosage")}]))
+        for a in self.store.find(artifact_type="consequence_counts"):
+            counts = pl.read_parquet(a.path)
+            for col, label in (("n_variants_total", "variants carried"), ("n_missense_variant", "missense"),
+                               ("n_lof", "loss of function"), ("n_splice", "splice"),
+                               ("n_damaging_missense", "damaging missense (AlphaMissense)")):
+                if col in counts.columns and counts.height:
+                    s.charts.append(self.chart(charts.histogram(counts.get_column(col).to_list(),
+                                                                f"{a.source_id}: {label} per participant",
+                                                                x="variants per participant")))
+            s.notes.append(f"{a.source_id}: consequence counts are EFGPP-derived (VEP PICK / canonical / most severe "
+                           "consequence, one per variant); not a published burden model.")
+        rows = []
+        for a in self.store.find(origin="predicted"):
+            man_path = a.metadata.get("manifest")
+            man = yaml.safe_load(Path(man_path).read_text(encoding="utf-8")) if man_path and Path(man_path).exists() else {}
+            rows.append({"modality": str(a.modality), "provider": man.get("provider"), "dataset": man.get("dataset"),
+                         "model version": (man.get("model_resource") or {}).get("version"), "tissue": a.tissue,
+                         "platform": man.get("platform"), "training ancestry": man.get("training_ancestry"),
+                         "ancestry match": man.get("ancestry_match_status"), "participants": a.participant_count,
+                         "features": a.feature_count, "median coverage": man.get("median_coverage"),
+                         "median validation R2": man.get("median_validation_r2"),
+                         "low coverage": man.get("low_coverage_features"), "engine": man.get("engine")})
         if rows:
-            s.tables.append(_table("Predicted artifacts", rows))
-        else:
-            s.empty = "No predicted modality generated."
+            s.tables.append(_table("Genetically predicted data", rows))
+        from efgpp.data.predicted.compare import compare_observed_predicted
+
+        qc_rows = []
+        for modality in (Modality.EXPRESSION, Modality.SPLICING, Modality.PROTEOMICS, Modality.METABOLOMICS,
+                         Modality.METHYLATION):
+            try:
+                qc_rows += [{"modality": modality.value, **r} for r in compare_observed_predicted(self.project, modality)]
+            except Exception as exc:  # noqa: BLE001 - QC must never break the report
+                s.notes.append(f"observed vs predicted {modality.value}: not compared ({exc})")
+        if qc_rows:
+            s.tables.append(_table("QC: observed vs genetically predicted (per-feature Pearson r)", qc_rows))
+        if not s.tables and not s.charts:
+            s.empty = ("Nothing derived yet: `efgpp data variants enable` / `efgpp data predict enable ...`, "
+                       "then `efgpp data predict plan`.")
         return s
 
     def annotation_section(self) -> Section:

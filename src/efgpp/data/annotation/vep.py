@@ -28,9 +28,11 @@ def vep_command(project: Project, sites: Path, out: Path, build: str, threads: i
         args += ["--cache_version", str(cfg.release)]
     if threads > 1:
         args += ["--fork", str(threads)]
-    fasta = project.resources.genome.fasta
+    from efgpp.data.references.genome import installed_fasta
+
+    fasta = installed_fasta(project)
     if fasta:
-        args += ["--fasta", str(project.resolve(fasta)), "--hgvs"]
+        args += ["--fasta", str(fasta), "--hgvs"]
     return [*args, *cfg.extra_args]
 
 

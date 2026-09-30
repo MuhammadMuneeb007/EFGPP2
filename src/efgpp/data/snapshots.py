@@ -34,7 +34,7 @@ from efgpp.project import LOCK_FILE, Project
 from efgpp.resources.checksums import Checksum, checksum_paths, text_sha256
 
 FROZEN_TABLES = ("participants", "sample_aliases", "events", "biospecimens", "assays",
-                 "phenotype_definitions", "phenotype_observations")
+                 "phenotype_definitions", "phenotype_observations", "molecular_models")
 
 
 class SnapshotExistsError(FileExistsError):

@@ -7,6 +7,7 @@ from pathlib import Path
 import typer
 
 from efgpp.cli.common import console, load_project, table, user_path
+from efgpp.cli.molecular import hla_app, predict_app, variants_app
 from efgpp.config.data import (
     ClinicalSource,
     GenotypeSource,
@@ -23,6 +24,9 @@ add_app = typer.Typer(help="Add a participant-level source to data.yaml and regi
 app.add_typer(add_app, name="add")
 gwas_app = typer.Typer(help="GWAS summary statistics: list and (re)run GWASLab.", no_args_is_help=True)
 app.add_typer(gwas_app, name="gwas")
+app.add_typer(predict_app, name="predict")
+app.add_typer(variants_app, name="variants")
+app.add_typer(hla_app, name="hla")
 
 
 @gwas_app.command("list")
@@ -181,7 +185,7 @@ def _add_omics(modality: Modality, prefix: str):  # type: ignore[no-untyped-def]
 
 
 for _m, _p in ((Modality.EXPRESSION, "RNA"), (Modality.METHYLATION, "METH"), (Modality.PROTEOMICS, "PROT"),
-               (Modality.METABOLOMICS, "METAB")):
+               (Modality.METABOLOMICS, "METAB"), (Modality.SPLICING, "SPLICE")):
     add_app.command(_m.value)(_add_omics(_m, _p))
 
 
@@ -286,23 +290,6 @@ def add_clinical(
         timeline=_timeline(event_column, time_column), mode=mode))
     project.save_data_config()
     _register(project, sid)
-
-
-@app.command()
-def predict(tissue: list[str] = typer.Option(..., "--tissue", help="PredictDB tissue, e.g. Whole_Blood (repeatable)"),
-            genotype: str | None = typer.Option(None, "--genotype", help="genotype source id (default: the first)"),
-            off: bool = typer.Option(False, "--off", help="switch predicted expression off")) -> None:
-    """Switch on genetically predicted expression (PrediXcan) for these tissues; runs in `data prepare`."""
-    project = load_project()
-    cfg = project.data.predicted.expression
-    cfg.enabled = not off
-    if not off:
-        cfg.tissues = list(dict.fromkeys([*cfg.tissues, *tissue]))
-        if genotype:
-            cfg.genotype_artifact = genotype
-    project.save_data_config()
-    state = "off" if off else f"on for {', '.join(cfg.tissues)}"
-    console.print(f"[green]✓[/] predicted expression {state}; models: `efgpp resources install predictdb`")
 
 
 @app.command()

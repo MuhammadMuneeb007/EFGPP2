@@ -44,6 +44,11 @@ class AlphaGenomeResource(ResourceEntry):
     max_api_variants: int = 1000
 
 
+class SpliceAIResource(ResourceEntry):
+    # Maximum distance between the variant and gained/lost splice site (SpliceAI -D).
+    distance: int = 50
+
+
 class PGSCatalogResource(ResourceEntry):
     score_ids: list[str] = []
     genome_build: Literal["GRCh37", "GRCh38"] | None = None
@@ -62,6 +67,7 @@ class ResourcesConfig(StrictModel):
     dbsnp: ResourceEntry = ResourceEntry()
     alphamissense: ResourceEntry = ResourceEntry()
     alphagenome: AlphaGenomeResource = AlphaGenomeResource()
+    spliceai: SpliceAIResource = SpliceAIResource()
     gtex: ResourceEntry = ResourceEntry()
     predictdb: ResourceEntry = ResourceEntry()
     omicspred: ResourceEntry = ResourceEntry()

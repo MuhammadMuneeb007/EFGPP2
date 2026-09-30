@@ -171,6 +171,7 @@ class ObservedSources(StrictModel):
     methylation: list[OmicsSource] = []
     proteomics: list[OmicsSource] = []
     metabolomics: list[OmicsSource] = []
+    splicing: list[OmicsSource] = []
     clinical: list[ClinicalSource] = []
 
     @field_validator("phenotypes", mode="before")
@@ -194,6 +195,7 @@ class ObservedSources(StrictModel):
             Modality.METHYLATION: self.methylation,
             Modality.PROTEOMICS: self.proteomics,
             Modality.METABOLOMICS: self.metabolomics,
+            Modality.SPLICING: self.splicing,
         }
 
 
@@ -208,10 +210,33 @@ class ModelProviderConfig(StrictModel):
     version: str | None = None
 
 
+# Prediction engines. metaxcan = PrediXcan (Predict.py) on PredictDB SQLite models;
+# plink_score / generic_weights = standardized weights, harmonized, scored with `plink2 --score`;
+# mimosa = MIMOSA methylation weights (converted to standardized weights, then scored like generic weights).
+PredictionEngine = Literal["metaxcan", "plink_score", "generic_weights", "mimosa"]
+PredictionProvider = Literal["predictdb", "omicspred", "mimosa", "custom"]
+
+ENGINES_BY_MODALITY: dict[str, tuple[str, ...]] = {
+    "expression": ("metaxcan", "plink_score"),
+    "splicing": ("metaxcan", "plink_score"),
+    "proteomics": ("metaxcan", "plink_score", "generic_weights"),
+    "metabolomics": ("metaxcan", "plink_score", "generic_weights"),
+    "methylation": ("mimosa", "plink_score", "generic_weights"),
+}
+
+
 class PredictedModalityConfig(StrictModel):
+    """Genetically predicted molecular traits for one modality (origin PREDICTED, never observed)."""
+
     enabled: bool = False
-    engine: Literal["metaxcan"] = "metaxcan"
+    engine: PredictionEngine = "metaxcan"
+    provider: PredictionProvider = "predictdb"
+    # Model set: gtex_v8_mashr_eqtl | gtex_v8_mashr_sqtl | whole_blood_v2 (MIMOSA) | ...
+    dataset: str | None = None
+    # Dataset ids chosen by the user (OmicsPred OPDxxxxxx, PredictDB protein files). Never auto-selected.
+    datasets: list[str] = []
     genotype_artifact: str | None = None  # a genotype source id, e.g. GENO001
+    # PredictDB tissues; ["all"] = every tissue in the installed archive, each predicted separately.
     tissues: list[str] = []
     model_provider: ModelProviderConfig = ModelProviderConfig()
     # Use the QC-passed genotype when one exists.
@@ -220,20 +245,116 @@ class PredictedModalityConfig(StrictModel):
     model_genome_build: Literal["GRCh37", "GRCh38"] = "GRCh38"
     # MetaXcan --on_the_fly_mapping METADATA pattern (GTEx v8 PredictDB variant ids).
     variant_id_pattern: str | None = "chr{}_{}_{}_{}_b38"
+    # Share of a model's variants that must be found in the genotype; below it the feature is
+    # LOW_COVERAGE and left empty unless allow_low_coverage is true.
+    minimum_variant_coverage: float = Field(0.50, ge=0, le=1)
+    allow_low_coverage: bool = False
+    # Models whose published validation R2 is at or below this are marked below_threshold (MIMOSA: 0.005).
+    minimum_model_r2: float | None = None
+    # Optional feature -> gene mapping (TSV with feature_id, gene_id[, gene_name]) for splicing features.
+    feature_mapping: str | None = None
     extra_args: list[str] = []
 
 
+# Defaults per modality; they also fill partially written YAML (e.g. `methylation: {enabled: true}`).
+PREDICTED_DEFAULTS: dict[str, dict[str, Any]] = {
+    "expression": {"provider": "predictdb", "engine": "metaxcan", "dataset": "gtex_v8_mashr_eqtl"},
+    "splicing": {"provider": "predictdb", "engine": "metaxcan", "dataset": "gtex_v8_mashr_sqtl"},
+    "proteomics": {"provider": "omicspred", "engine": "generic_weights"},
+    "metabolomics": {"provider": "omicspred", "engine": "generic_weights"},
+    "methylation": {"provider": "mimosa", "engine": "mimosa", "dataset": "whole_blood_v2", "minimum_model_r2": 0.005},
+}
+
+
+def _predicted(modality: str) -> Any:
+    return Field(default_factory=lambda: PredictedModalityConfig(**PREDICTED_DEFAULTS[modality]))
+
+
 class PredictedConfig(StrictModel):
-    expression: PredictedModalityConfig = PredictedModalityConfig()
-    proteomics: PredictedModalityConfig = PredictedModalityConfig()
-    metabolomics: PredictedModalityConfig = PredictedModalityConfig()
+    expression: PredictedModalityConfig = _predicted("expression")
+    splicing: PredictedModalityConfig = _predicted("splicing")
+    proteomics: PredictedModalityConfig = _predicted("proteomics")
+    metabolomics: PredictedModalityConfig = _predicted("metabolomics")
+    methylation: PredictedModalityConfig = _predicted("methylation")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _modality_defaults(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            value = dict(value)
+            for modality, defaults in PREDICTED_DEFAULTS.items():
+                if isinstance(value.get(modality), dict):
+                    value[modality] = {**defaults, **value[modality]}
+        return value
+
+    @model_validator(mode="after")
+    def _engines(self) -> PredictedConfig:
+        for modality, cfg in self.items():
+            allowed = ENGINES_BY_MODALITY[modality.value]
+            if cfg.engine not in allowed:
+                raise ValueError(f"predicted.{modality.value}.engine {cfg.engine!r} is not valid for "
+                                 f"{modality.value}; choose from {', '.join(allowed)}")
+        return self
 
     def items(self) -> list[tuple[Modality, PredictedModalityConfig]]:
         return [
             (Modality.EXPRESSION, self.expression),
+            (Modality.SPLICING, self.splicing),
             (Modality.PROTEOMICS, self.proteomics),
             (Modality.METABOLOMICS, self.metabolomics),
+            (Modality.METHYLATION, self.methylation),
         ]
+
+
+LOF_CONSEQUENCES = ["transcript_ablation", "splice_acceptor_variant", "splice_donor_variant", "stop_gained",
+                    "frameshift_variant", "stop_lost", "start_lost"]
+
+
+class VariantAnnotationSwitches(StrictModel):
+    vep: bool = True
+    clinvar: bool = True
+    gnomad: bool = True
+    alphamissense: bool = True
+    spliceai: bool = False
+
+
+class VariantAggregation(StrictModel):
+    consequence_counts: bool = True
+    functional_burden: bool = True
+    gene_burden: bool = True
+
+
+class ParticipantVariantsConfig(StrictModel):
+    """Which ALT alleles each participant carries, joined to variant annotations (all DERIVED)."""
+
+    enabled: bool = False
+    genotype_artifact: str | None = None  # default: every genotype source
+    use_qc_genotype: bool = True
+    carrier_only: bool = True  # store only rows with ALT dosage > 0
+    retain_hardcall: bool = True
+    retain_dosage: bool = True
+    partition_by_chromosome: bool = True
+    # bcftools norm (left-align, REF check, split multiallelics) for VCF/BCF/PGEN/BGEN inputs.
+    normalize: bool = True
+    annotations: VariantAnnotationSwitches = VariantAnnotationSwitches()
+    aggregation: VariantAggregation = VariantAggregation()
+    # Reporting thresholds; raw scores are always kept.
+    damaging_alphamissense: float = 0.564  # AlphaMissense "likely pathogenic" cut-off
+    spliceai_thresholds: list[float] = [0.2, 0.5, 0.8]
+    rare_af: float = 0.01  # gnomAD AF below this counts as rare
+    lof_consequences: list[str] = LOF_CONSEQUENCES
+    # Optional EFGPP-derived weighted gene burden: consequence term -> weight (not a published model).
+    burden_weights: dict[str, float] = {}
+
+
+class HLAConfig(StrictModel):
+    """Optional HLA imputation with HIBAG (DERIVED; needs a classifier matching ancestry, platform, build)."""
+
+    enabled: bool = False
+    genotype_artifact: str | None = None
+    loci: list[str] = ["A", "B", "C", "DRB1", "DQA1", "DQB1", "DPB1"]
+    # Installed HIBAG classifier (resource version from `efgpp resources install hibag ...`).
+    classifier: str | None = None
 
 
 class AliasFileSpec(StrictModel):
@@ -317,6 +438,8 @@ class DataConfig(StrictModel):
     participants: ParticipantsSpec = ParticipantsSpec()
     observed: ObservedSources = ObservedSources()
     predicted: PredictedConfig = PredictedConfig()
+    participant_variants: ParticipantVariantsConfig = ParticipantVariantsConfig()
+    hla: HLAConfig = HLAConfig()
     simulation: SimulationConfig = SimulationConfig()
     events: EventsSpec | None = None
     biospecimens: BiospecimensSpec | None = None

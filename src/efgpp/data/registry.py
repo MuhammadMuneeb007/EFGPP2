@@ -197,6 +197,26 @@ CREATE TABLE IF NOT EXISTS modality_availability (
     artifact_id VARCHAR,
     available BOOLEAN
 );
+CREATE TABLE IF NOT EXISTS molecular_models (
+    model_id VARCHAR,
+    provider VARCHAR,
+    provider_dataset_id VARCHAR,
+    modality VARCHAR,
+    feature_id VARCHAR,
+    feature_name VARCHAR,
+    tissue VARCHAR,
+    platform VARCHAR,
+    training_cohort VARCHAR,
+    training_ancestry VARCHAR,
+    genome_build VARCHAR,
+    validation_r2 DOUBLE,
+    n_variants BIGINT,
+    coverage_fraction DOUBLE,
+    status VARCHAR,
+    resource_version VARCHAR,
+    resource_sha256 VARCHAR,
+    local_path VARCHAR
+);
 CREATE TABLE IF NOT EXISTS snapshots (
     snapshot_id VARCHAR PRIMARY KEY,
     name VARCHAR UNIQUE,
@@ -215,6 +235,7 @@ PARQUET_EXPORTS = {
     "biospecimens": "biospecimens.parquet",
     "assays": "assays.parquet",
     "phenotype_definitions": "phenotypes.parquet",
+    "molecular_models": "molecular_models.parquet",
 }
 
 JSON_COLUMNS = {

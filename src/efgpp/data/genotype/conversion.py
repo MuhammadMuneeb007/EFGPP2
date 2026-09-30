@@ -37,7 +37,16 @@ def convert(
     fs = resolve_fileset(Path(src.path), src.format)
     out_dir = out_dir or project.artifact_dir(Origin.DERIVED, Modality.GENOTYPE_QC, src.source_id or "converted")
     prefix = out_dir / f"{src.artifact_name}.{target}"
-    rec = run_tool(project, "plink2", [*fs.plink_input_args(), "--threads", str(threads), *EXPORTS[target],
+    extra: list[str] = []
+    if target == "vcf":
+        # REF/ALT from the reference FASTA (PLINK .bed only has a provisional REF), so VCF-based
+        # tools such as PrediXcan match chr_pos_REF_ALT model variant ids.
+        from efgpp.data.references.genome import installed_fasta
+
+        fasta = installed_fasta(project)
+        if fasta is not None:
+            extra = ["--fa", str(fasta), "--ref-from-fa", "force"]
+    rec = run_tool(project, "plink2", [*fs.plink_input_args(), "--threads", str(threads), *EXPORTS[target], *extra,
                                        "--out", str(prefix)], step_id=step_id, inputs=[artifact_id])
     produced = resolve_fileset(prefix if target in ("pgen", "bed") else Path(str(prefix) + (".vcf.gz" if target == "vcf" else ".bgen")), target)
     with Registry.open(project) as reg:

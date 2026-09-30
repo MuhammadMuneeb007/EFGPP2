@@ -56,6 +56,8 @@ TOOLS: dict[str, ToolSpec] = {
                  conda_package="open-cravat", optional=True),
         ToolSpec("predixcan", "metaxcan", "PREDICTED OMICS", ("predixcan", "Predict.py"), None, optional=True,
                  description="MetaXcan/PrediXcan Predict.py"),
+        ToolSpec("spliceai", "spliceai", "ANNOTATION", ("spliceai",), None, conda_package="spliceai", optional=True,
+                 description="SpliceAI splice-disruption scores (own environment with TensorFlow)"),
         ToolSpec("multiqc", "reporting", "REPORTING", ("multiqc",), conda_package="multiqc",
                  optional=True),
         ToolSpec("gwaslab", "gwaslab", "GWAS", ("gwaslab-python",),

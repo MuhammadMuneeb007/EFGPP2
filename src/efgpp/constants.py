@@ -54,6 +54,7 @@ class Modality(StrEnum):
     METHYLATION = "methylation"
     PROTEOMICS = "proteomics"
     METABOLOMICS = "metabolomics"
+    SPLICING = "splicing"
     CLINICAL = "clinical"
     # phenotype-independent derivations
     GENOTYPE_QC = "genotype_qc"
@@ -65,6 +66,10 @@ class Modality(StrEnum):
     GENOTYPE_IMPUTATION = "genotype_imputation"
     VARIANTS = "variants"
     VARIANT_ANNOTATIONS = "variant_annotations"
+    # participant-specific variants and their aggregation (DERIVED from the genotype)
+    PARTICIPANT_VARIANTS = "participant_variants"
+    CONSEQUENCE_BURDEN = "consequence_burden"
+    GENE_BURDEN = "gene_burden"
     # simulation ground truth
     TRUTH = "truth"
 
@@ -74,6 +79,16 @@ OMICS_MODALITIES = (
     Modality.METHYLATION,
     Modality.PROTEOMICS,
     Modality.METABOLOMICS,
+    Modality.SPLICING,
+)
+
+# Genetically predicted molecular modalities (origin PREDICTED; never "observed").
+GENETICALLY_PREDICTED_MODALITIES = (
+    Modality.EXPRESSION,
+    Modality.SPLICING,
+    Modality.PROTEOMICS,
+    Modality.METABOLOMICS,
+    Modality.METHYLATION,
 )
 
 # Modalities that can serve as participant-level predictors.

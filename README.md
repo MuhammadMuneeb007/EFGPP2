@@ -114,6 +114,11 @@ efgpp setup check                   # ✓/✗ for every tool, R package and repo
 | `prs-python` | Python 3.10: LDpred, VIPRS, magenpy, pandas-plink, pgenlib, **Hail** (+ Java 11) | conda-forge + PyPI |
 | `prs-py27` | Python 2.7 for LDSC, AnnoPred, PleioPred | conda-forge |
 | `simulation` | **simuPOP**, msprime, tskit, stdpopsim (R: sim1000G in `r`) | conda-forge |
+| `metaxcan` | MetaXcan / PrediXcan (Python 3.11), source pinned to a resolved commit (+ PLINK 2) | conda-forge + GitHub archive |
+| `methylation` | R ≥ 4.3, data.table, dplyr, optparse, BEDMatrix (MIMOSA conversion) | conda-forge |
+| `spliceai` | SpliceAI 1.3.1 + TensorFlow < 2.16 (own environment) | Bioconda |
+| `hla` | HIBAG, SNPRelate, gdsfmt, SeqArray | Bioconda / BiocManager |
+| `predicted-omics` | alias: `metaxcan` + `methylation` (model data comes from `efgpp resources install …`) | |
 
 Every environment was solved for `linux-64` against conda-forge + Bioconda only (EFGPP passes
 `--override-channels`, so Anaconda's commercial `defaults` channel is never used). If no
@@ -222,6 +227,20 @@ How EFGPP reads each kind of data lives in its own small file under `src/efgpp/m
 EFGPP uses it for this project (`efgpp modules list` shows which file is active). Column names
 are never changed: standardized tables keep the original names for feature engineering.
 
+## Genotype-derived molecular data
+
+From the genotype alone (never the phenotype), EFGPP builds each participant's carrier variants
+(ALT checked against the reference genome), consequence counts and gene burdens, and genetically
+predicted expression (GTEx v8), splicing (GTEx v8 sQTL), proteins and metabolites (OmicsPred /
+PredictDB) and whole-blood methylation (MIMOSA). See `Document.MD` section 14.
+
+```bash
+efgpp data variants enable
+efgpp data predict enable expression --tissue Whole_Blood
+efgpp data predict plan        # what is installed, what is missing (with the command to fix it)
+efgpp data prepare
+```
+
 ## Concepts
 
 | Concept | Where |
@@ -252,7 +271,9 @@ modelling PCs belong inside training folds.
 | VEP, OpenCRAVAT | wrapped (never re-implemented); Linux/macOS or WSL2/Docker | command building and parsers tested; the tools themselves not run here |
 | ClinVar, gnomAD, dbSNP, AlphaMissense | DuckDB lookups against the official files | tested on small synthetic files |
 | AlphaGenome | atlas table lookup; optional API mode | API mode is written against the published client and untested |
-| PrediXcan | MetaXcan `Predict.py` + PredictDB models | output handling tested with a mocked run |
+| Participant variants, consequence counts, gene burden | NumPy `.bed` decoding + DuckDB joins; REF/ALT checked against the FASTA | unit + integration tests (phenotype independence) |
+| Predicted expression / splicing / proteins / metabolites / methylation | PrediXcan (MetaXcan) or `plink2 --score` on standardized PredictDB, OmicsPred and MIMOSA weights | exact values tested; real GTEx v8 and OmicsPred resources installed and parsed |
+| SpliceAI, HIBAG | own environments | parsers tested; tools not run here |
 | Workflow | EFGPP's built-in executor; `efgpp export slurm` writes sbatch scripts for clusters | built-in executor tested; SLURM script generation tested, not executed |
 
 Native Windows runs the core and PLINK 2. Bioconda has no Windows builds, so VEP, bcftools and

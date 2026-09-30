@@ -239,15 +239,40 @@ def install_pip(root: Path, tk: Toolkit, log: Path, say: Progress, result: Toolk
 
 
 # ------------------------------------------------------------ repos / downloads
-def _archive_url(repo: Repo) -> str:
-    return f"https://github.com/{repo.github}/archive/{repo.ref or 'HEAD'}.zip"
+def _archive_url(repo: Repo, commit: str | None = None) -> str:
+    return f"https://github.com/{repo.github}/archive/{commit or repo.ref or 'HEAD'}.zip"
+
+
+def resolve_commit(github: str, ref: str | None) -> str | None:
+    """The commit a branch/tag points to now (GitHub API), so installs are pinned, never floating HEAD."""
+    import httpx
+
+    try:
+        r = httpx.get(f"https://api.github.com/repos/{github}/commits/{ref or 'HEAD'}", timeout=30,
+                      headers={"Accept": "application/vnd.github.sha"}, follow_redirects=True)
+        return r.text.strip() if r.status_code == 200 and len(r.text.strip()) == 40 else None
+    except httpx.HTTPError:
+        return None
+
+
+def write_source_pin(dest: Path, github: str, ref: str | None, commit: str | None, sha256: str) -> Path:
+    """software/opt/<name>/EFGPP_SOURCE.json: repository, commit, archive SHA-256 (read by the lock file)."""
+    import json
+    from datetime import UTC, datetime
+
+    pin = dest / "EFGPP_SOURCE.json"
+    pin.write_text(json.dumps({"github": github, "ref": ref, "commit": commit, "archive_sha256": sha256,
+                               "installed_at": datetime.now(UTC).isoformat(timespec="seconds")}, indent=1),
+                   encoding="utf-8")
+    return pin
 
 
 def install_repo(root: Path, repo: Repo, log: Path, say: Progress, result: ToolkitResult, build_path: list[str]) -> None:
     dest = root / "opt" / repo.name
-    say(f"downloading {repo.github}{'@' + repo.ref if repo.ref else ''}")
-    archive = root / "downloads" / f"{repo.name}-{repo.ref or 'HEAD'}.zip"
-    download(_archive_url(repo), archive)
+    commit = resolve_commit(repo.github, repo.ref)
+    say(f"downloading {repo.github}@{commit[:10] if commit else repo.ref or 'HEAD'}")
+    archive = root / "downloads" / f"{repo.name}-{(commit or repo.ref or 'HEAD')[:12]}.zip"
+    archive_sha = download(_archive_url(repo, commit), archive)
     shutil.rmtree(dest, ignore_errors=True)
     staging = root / "opt" / f".{repo.name}.tmp"
     shutil.rmtree(staging, ignore_errors=True)
@@ -261,6 +286,7 @@ def install_repo(root: Path, repo: Repo, log: Path, say: Progress, result: Toolk
             f.chmod(mode & 0o777 or 0o644)
     top.rename(dest)
     shutil.rmtree(staging, ignore_errors=True)
+    write_source_pin(dest, repo.github, repo.ref, commit, archive_sha)
     env = dict(os.environ)
     env["PATH"] = os.pathsep.join([*build_path, env.get("PATH", "")])
     for cmd in repo.build:
@@ -352,6 +378,11 @@ def install_toolkit(project: Project | None, name: str, *, shared: bool = False,
         install_pip(root, tk, log, say, result)
         if tk.r_cran or tk.r_bioc or tk.r_github:
             install_r_packages(root, tk, log, say, result)
+    if tk.tools:
+        from efgpp.setup.installers import install_tools
+
+        for tool_name, status, detail in install_tools(project, tk.tools, shared=shared, progress=say):
+            result.add("tool", tool_name, "installed" if status in ("installed", "ok") else status, detail)
     build_path = [str(env_bin(root, tk.env))] if tk.env else []
     for repo in tk.repos:
         try:
@@ -394,6 +425,11 @@ def check_toolkit(project: Project | None, name: str, *, shared: bool = False) -
     if shared_home is not None:
         roots = [shared_home] if shared else [*roots, shared_home]
     root = next((r for r in roots if tk.env and (env_prefix(r, tk.env) / "conda-meta").exists()), roots[0])
+    if tk.tools:
+        from efgpp.setup.tools import available
+
+        for tool in tk.tools:
+            result.add("tool", tool, "ok" if available(project, tool) else "missing", "")
     if tk.env:
         ok = (env_prefix(root, tk.env) / "conda-meta").exists()
         result.add("conda", tk.env, "ok" if ok else "missing", str(env_prefix(root, tk.env)))
