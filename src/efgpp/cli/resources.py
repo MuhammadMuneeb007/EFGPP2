@@ -20,6 +20,22 @@ def list_() -> None:
     console.print(table("Resources", ["name", "enabled", "installed", "build", "provider", "path"], rows))
 
 
+@app.command("enable")
+def enable(names: list[str] = typer.Argument(..., help="resource names, e.g. vep clinvar alphamissense"),
+           off: bool = typer.Option(False, "--off", help="disable instead")) -> None:
+    """Switch resources on (or off with --off) in resources.yaml; enabled annotations run in `data prepare`."""
+    project = load_project()
+    known = list(type(project.resources).model_fields)
+    unknown = [n for n in names if n not in known]
+    if unknown:
+        console.print(f"[red]✗ unknown resource(s): {', '.join(unknown)}[/] (known: {', '.join(known)})")
+        raise typer.Exit(1)
+    for n in names:
+        getattr(project.resources, n).enabled = not off
+    project.save_resources_config()
+    console.print(f"[green]✓[/] {'disabled' if off else 'enabled'}: {', '.join(names)}")
+
+
 @app.command("install")
 def install(name: str = typer.Argument(...), build: str | None = typer.Option(None, "--build"),
             force: bool = typer.Option(False, "--force", help="replace an installed copy of the same version")) -> None:

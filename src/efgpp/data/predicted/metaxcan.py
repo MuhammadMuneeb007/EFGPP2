@@ -30,7 +30,15 @@ def model_path(project: Project, cfg: PredictedModalityConfig, tissue: str) -> P
     mp = cfg.model_provider
     if tissue in mp.model_paths:
         return project.resolve(mp.model_paths[tissue])
-    base = project.resolve(mp.models_dir) if mp.models_dir else project.resource_root / "predictdb"
+    if mp.models_dir:
+        base = project.resolve(mp.models_dir)
+    else:
+        # Models installed with `efgpp resources install predictdb` (versioned folder), else resources/predictdb.
+        from efgpp.data.annotation import resource_version
+
+        _, installed = resource_version(project, "predictdb")
+        installed = project.resolve(str(installed)) if installed else None
+        base = installed if installed and installed.is_dir() else project.resource_root / "predictdb"
     return base / f"{mp.model_prefix}{tissue}{mp.model_suffix}"
 
 

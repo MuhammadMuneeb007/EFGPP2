@@ -128,3 +128,22 @@ def test_gwas_add_with_study_details(project: Project, tmp_path: Path, run_cli, 
     assert [x.id for x in gwas_for_phenotype(p, "migraine")] == ["GWAS001"]
     assert gwas_for_phenotype(p, "some_other_trait") == []
     assert "not run" in run_cli("data", "gwas", "list", "--phenotype", "migraine").output
+
+
+def test_resources_enable(project: Project, run_cli, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.chdir(project.root)
+    assert "enabled: vep, clinvar" in run_cli("resources", "enable", "vep", "clinvar").output
+    r = Project.load(project.root).resources
+    assert r.vep.enabled and r.clinvar.enabled and not r.gnomad.enabled
+    run_cli("resources", "enable", "clinvar", "--off")
+    assert not Project.load(project.root).resources.clinvar.enabled
+    assert run_cli("resources", "enable", "nosuch", expect=1).exit_code == 1
+
+
+def test_data_predict_switch(project: Project, run_cli, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.chdir(project.root)
+    run_cli("data", "predict", "--tissue", "Whole_Blood", "--tissue", "Brain_Cortex")
+    cfg = Project.load(project.root).data.predicted.expression
+    assert cfg.enabled and cfg.tissues == ["Whole_Blood", "Brain_Cortex"]
+    run_cli("data", "predict", "--tissue", "Whole_Blood", "--off")
+    assert not Project.load(project.root).data.predicted.expression.enabled

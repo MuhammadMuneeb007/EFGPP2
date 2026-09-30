@@ -1,4 +1,4 @@
-# Example 1 — add the migraine PLINK cohort
+# Example 1 — the migraine PLINK cohort, from installation to snapshot
 
 Files in `/data/ascher02/uqmmune1/ANNOVAR/migraine`:
 
@@ -9,82 +9,109 @@ Files in `/data/ascher02/uqmmune1/ANNOVAR/migraine`:
 | `migraine.cov` | covariates: header `FID IID <covariates…>` | covariates `COV001` |
 | `migraine.gz` | GWAS summary statistics: `CHR BP SNP A1 A2 N SE P OR INFO MAF` | GWAS `GWAS001` (GWASLab) |
 
-EFGPP infers everything itself (the rules are in `src/efgpp/modules/*.py`, editable per
-project with `efgpp modules export`):
-
-- **genotype**: format (bed), sample IDs (IID), genome build (GRCh37, checked against the
-  reference with pyliftover) → lifted to GRCh38 before QC.
-- **phenotype**: ID column `IID`, phenotype column `Height`, type binary, PLINK coding
-  (2 = case, 1 = control); named `migraine` after the file.
-- **covariates**: ID column `IID`, every other column except `FID`; sex / age / PCs / batch
-  recognised by name and values; categorical vs numeric decided automatically.
-- **GWAS**: CHR→chrom, BP→pos, SNP→snpid, A1→ea, A2→nea, N, SE, P, OR, INFO recognised;
-  GWASLab checks it, infers the build and lifts it to GRCh38.
-
-Original column names are kept in every output file (for feature engineering later).
-`migraine_QC.*` is not needed (EFGPP runs its own QC); the other `migraine*.txt`, `.PRSCS`, …
-are old PRS results.
+Run everything on the **login node** (downloads need internet); for long steps use an
+interactive job or `efgpp export slurm`. Everything is installed inside the project folder:
+tools in `software/`, reference data in `resources/`, logs in `logs/` — nothing in your home
+directory, and every tool has its own conda environment (never the `efgpp` one).
 
 ```bash
-# ---------------------------------------------------------------------------
-# Setup: go to your EFGPP project
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# 0. EFGPP itself (once; again after every `git pull`)
+# ===========================================================================
+cd /data/ascher02/uqmmune1/EFGPP/EFGPP2
+git pull
+mamba env create -f environment.yml || mamba env update -n efgpp -f environment.yml
 conda activate efgpp
+efgpp --version
+
+# ===========================================================================
+# 1. Project folder (everything below is downloaded and written here)
+# ===========================================================================
+mkdir -p /data/ascher02/uqmmune1/EFGPP/EFGPP2/my_project
 cd /data/ascher02/uqmmune1/EFGPP/EFGPP2/my_project
 [ -f project.yaml ] || efgpp init .
-efgpp setup tools gwaslab                  # GWASLab in its own conda env (once per project)
 
-# ---------------------------------------------------------------------------
-# 1. Genotype (referenced in place, never copied)
-# ---------------------------------------------------------------------------
-efgpp data add genotype --path /data/ascher02/uqmmune1/ANNOVAR/migraine/migraine
+# ===========================================================================
+# 2. Tools, each in its own conda env under ./software/envs/<tool>
+#    plink2, plink, bcftools/tabix/bgzip, flashpca, multiqc, oc (OpenCRAVAT),
+#    vep (+perl), predixcan, gwaslab
+# ===========================================================================
+efgpp setup tools
+# efgpp setup tools vep --force                 # reinstall one tool if it failed
 
-# ---------------------------------------------------------------------------
-# 2. Phenotype (ID column, phenotype column, type and coding inferred)
-# ---------------------------------------------------------------------------
-efgpp phenotype add --path /data/ascher02/uqmmune1/ANNOVAR/migraine/migraine.height
+# ===========================================================================
+# 3. Toolkits (several GB; R packages compile for a while)
+#    perl, r (bigsnpr/LDpred-2, lassosum, ...), prs (PRSice-2, PRScs, LDSC, AnnoPred, ...),
+#    prs-python, prs-py27, simulation (simuPOP, msprime, ...)
+# ===========================================================================
+efgpp setup toolkit --list
+efgpp setup toolkit all
 
-# ---------------------------------------------------------------------------
-# 3. Covariates (ID column, covariates, sex/age/PC/batch roles, categorical inferred)
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# 4. Reference data into ./resources (all GRCh38)
+# ===========================================================================
+efgpp resources install genome --build GRCh38   # FASTA + liftover chains (GRCh37 -> GRCh38)
+efgpp resources install vep                     # VEP cache (large, one time)
+efgpp resources install clinvar                 # clinical significance per variant
+efgpp resources install alphamissense           # missense pathogenicity scores
+efgpp resources install predictdb               # GTEx v8 MASHR models for PrediXcan (49 tissues)
+# efgpp resources install pgs_catalog           # set pgs_catalog.score_ids in resources.yaml first
+efgpp resources list
+
+# ===========================================================================
+# 5. Check that everything is installed (✓ / ✗ with the reason)
+# ===========================================================================
+efgpp doctor
+efgpp setup check
+eval "$(efgpp setup path)"                      # ./software/bin on PATH for this shell (optional)
+
+# ===========================================================================
+# 6. Add the data (columns, types, roles and genome build are inferred;
+#    original column names are kept; genotype is referenced, never copied)
+# ===========================================================================
+efgpp data add genotype   --path /data/ascher02/uqmmune1/ANNOVAR/migraine/migraine
+efgpp phenotype add       --path /data/ascher02/uqmmune1/ANNOVAR/migraine/migraine.height
 efgpp data add covariates --path /data/ascher02/uqmmune1/ANNOVAR/migraine/migraine.cov
+efgpp data add gwas       --path /data/ascher02/uqmmune1/ANNOVAR/migraine/migraine.gz \
+    --trait migraine --phenotype migraine --ancestry European
+#   add what you know: --n-cases <number> --n-controls <number> --study <name>
+#   a GWAS of another trait for migraine:
+#   efgpp data add gwas --path <depression GWAS> --trait depression --phenotype migraine
 
-# ---------------------------------------------------------------------------
-# 4. GWAS for migraine: columns inferred; GWASLab runs now and stores the result
-#    (add what you know about the study on the same command, for example
-#     --ancestry European --n-cases <number> --n-controls <number> --study <name>)
-# ---------------------------------------------------------------------------
-efgpp data add gwas --path /data/ascher02/uqmmune1/ANNOVAR/migraine/migraine.gz \
-    --trait migraine --phenotype migraine
+efgpp data inspect                              # what was inferred
+efgpp phenotype list
+efgpp data gwas list --phenotype migraine
 
-# A GWAS of another trait used for migraine (e.g. the legacy depression GWAS):
-# efgpp data add gwas --path <depression GWAS file> --trait depression --phenotype migraine
+# ===========================================================================
+# 7. Per-variant annotation of the genotype variants + predicted expression
+#    (run inside `efgpp data prepare`)
+# ===========================================================================
+efgpp resources enable vep clinvar alphamissense
+efgpp data predict --tissue Whole_Blood         # add more: --tissue Brain_Cortex ...
 
-efgpp data gwas list --phenotype migraine  # the GWAS available for migraine
+# ===========================================================================
+# 8. Validate, run, inspect, freeze (stop if validate shows ✗)
+#    prepare: liftover to GRCh38 -> genotype QC -> PCA/kinship -> VEP/ClinVar/AlphaMissense
+#             -> PrediXcan -> availability -> report
+# ===========================================================================
+efgpp data validate
+efgpp data plan                                 # every step, and why a step is skipped
+efgpp data prepare --cores 8
+efgpp data availability
+efgpp data report                               # reports/data/index.html
+efgpp data freeze --name migraine_v1            # immutable snapshot for the next layer
+efgpp data snapshots
+efgpp data verify migraine_v1
 
-# ---------------------------------------------------------------------------
-# 5. Check, run, inspect, freeze (run one at a time; stop if validate shows ✗)
-#    validate shows: "genome build GRCh37 (... reference_bases_pyliftover)"
-#                    "will be lifted GRCh37 -> GRCh38 with pyliftover"
-#    prepare runs:   harmonize.GENO001 (liftover) -> genotype_qc -> pca -> availability -> report
-# ---------------------------------------------------------------------------
-efgpp data validate                    # every problem, with counts
-efgpp data prepare                     # QC, PCA, kinship, availability, report
-efgpp data availability                # who has genotype + phenotype + covariates
-efgpp data report                      # reports/data/index.html
-efgpp data freeze --name migraine_v1   # immutable snapshot for the next layer
-
-# ---------------------------------------------------------------------------
-# Fixing a source that was added wrongly
-# ---------------------------------------------------------------------------
-# efgpp data remove COV001             # also works for GWAS ids, e.g. GWAS001
-# efgpp modules export covariates      # edit modules/covariates.py for this project, then re-add
-
-# ---------------------------------------------------------------------------
-# Alternative: register the whole legacy folder at once (source never modified)
-# ---------------------------------------------------------------------------
-# efgpp data migrate --source /data/ascher02/uqmmune1/ANNOVAR/migraine --profile legacy-efgpp --dry-run
-# efgpp data migrate --source /data/ascher02/uqmmune1/ANNOVAR/migraine --profile legacy-efgpp --apply
+# ===========================================================================
+# Fixing things
+# ===========================================================================
+# efgpp data remove COV001                      # a source added wrongly (also GWAS001, PH001 via phenotype remove)
+# efgpp modules export covariates               # edit modules/covariates.py for this project, then re-add
+# efgpp data gwas run GWAS001 --force           # re-run GWASLab
+# efgpp resources enable clinvar --off          # switch an annotation off
+# efgpp export slurm                            # sbatch scripts in hpc/ instead of running locally
+# logs: ./software/logs/<tool>.install.log, ./logs/
 ```
 
 Where the results are
@@ -97,12 +124,16 @@ Where the results are
 | QC-passed genotype (GRCh38) | `data/derived/genotype_qc/GENO001/GENO001_qc.*` |
 | GWAS, original column names (GRCh38) | `resources/gwas/GWAS001/GWAS001.GRCh38.parquet` |
 | GWAS, GWASLab names (GRCh38) | `resources/gwas/GWAS001/GWAS001.GRCh38.gwaslab.parquet` + `GWAS001.gwaslab_report.json` |
+| variant annotations (VEP, ClinVar, AlphaMissense) | `data/derived/variant_annotations/GENO001/GENO001_{vep,clinvar,alphamissense}.parquet` |
+| predicted expression | `data/predicted/expression/Whole_Blood/predicted_expression_Whole_Blood.parquet` |
+| report, snapshot | `reports/data/index.html`, `snapshots/migraine_v1.yaml` + `snapshots/migraine_v1/` |
 
 Notes
 
-- Samples are matched on `IID` across the `.fam`, `.cov` and `.height` files, never by row order.
+- Samples are matched on `IID` across `.fam`, `.cov` and `.height`, never by row order.
 - The 2 variants at position 0 are unplaced array probes: kept in the original, left out of the
-  GRCh38 copy (they cannot be lifted); see the liftover report.
-- `efgpp data prepare` runs everything locally and prints errors directly. For a cluster,
-  `efgpp export slurm` writes sbatch scripts.
-- More detail: `Document.MD`, sections 11–13.
+  GRCh38 copy (see the liftover report).
+- `migraine_QC.*` is not needed (EFGPP runs its own QC); the other `migraine*.txt`, `.PRSCS`, …
+  are old PRS results.
+- DBSLMM's `dbslmm` binary is on Google Drive only: put it in `./software/opt/DBSLMM/software/dbslmm`.
+- More detail: `Document.MD`, sections 11–13; all install commands: `Commands.md`.

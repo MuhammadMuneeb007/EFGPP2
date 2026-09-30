@@ -482,3 +482,12 @@ serve another phenotype (list it with several `--phenotype`). By default the GWA
 GWASLab immediately (needs `efgpp setup tools gwaslab`); unchanged files are not reprocessed.
 Case/control counts given as numbers become `N_CASE`/`N_CONTROL` columns; ancestry, counts,
 study and target phenotypes are recorded with the artifact and in the data report.
+
+### Switching annotation and prediction on
+
+| Command | Effect |
+|---|---|
+| `efgpp resources enable vep clinvar alphamissense` (`--off` to disable) | sets `enabled: true` in `resources.yaml`; `efgpp data prepare` then annotates every genotype variant with these resources |
+| `efgpp data predict --tissue Whole_Blood [--tissue …] [--genotype GENO001]` (`--off`) | switches on PrediXcan in `data.yaml`; models installed with `efgpp resources install predictdb` are used automatically |
+
+The full flow for one cohort, from installation to snapshot, is in `example1.md`.

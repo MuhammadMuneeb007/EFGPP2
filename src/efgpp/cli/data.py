@@ -289,6 +289,23 @@ def add_clinical(
 
 
 @app.command()
+def predict(tissue: list[str] = typer.Option(..., "--tissue", help="PredictDB tissue, e.g. Whole_Blood (repeatable)"),
+            genotype: str | None = typer.Option(None, "--genotype", help="genotype source id (default: the first)"),
+            off: bool = typer.Option(False, "--off", help="switch predicted expression off")) -> None:
+    """Switch on genetically predicted expression (PrediXcan) for these tissues; runs in `data prepare`."""
+    project = load_project()
+    cfg = project.data.predicted.expression
+    cfg.enabled = not off
+    if not off:
+        cfg.tissues = list(dict.fromkeys([*cfg.tissues, *tissue]))
+        if genotype:
+            cfg.genotype_artifact = genotype
+    project.save_data_config()
+    state = "off" if off else f"on for {', '.join(cfg.tissues)}"
+    console.print(f"[green]✓[/] predicted expression {state}; models: `efgpp resources install predictdb`")
+
+
+@app.command()
 def remove(source_id: str = typer.Argument(..., help="source id, e.g. COV001")) -> None:
     """Remove a source from data.yaml (registered artifacts are kept for provenance)."""
     project = load_project()
