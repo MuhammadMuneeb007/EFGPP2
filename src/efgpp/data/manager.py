@@ -84,6 +84,12 @@ class DataManager:
                     ad.store.set_status(art.artifact_id, art.status, validation_passed=rep.passed,  # type: ignore[arg-type]
                                         validation_failures=rep.n_fail)
             if source_ids is None:
+                from efgpp.data.gwas import validate_gwas
+
+                for g in self.project.data.gwas:
+                    rep = validate_gwas(self.project, g)
+                    rep.save(self.project.qc_dir("gwas") / f"{g.id}_validation.json")
+                    reports.append(rep)
                 reports.append(self.cross_source_report(reg))
         return reports
 

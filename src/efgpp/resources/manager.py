@@ -81,6 +81,12 @@ def _register(project: Project, fetched: FetchedResource, dest: Path, local: Pat
 def install(project: Project, name: str, *, build: str | None = None, force: bool = False) -> InstallResult:
     from efgpp.data.snapshots import protected_resource_paths
 
+    target_build = project.config.defaults.target_build
+    if build is not None and build != target_build:
+        raise ValueError(f"this project's target build is {target_build}; resources are installed for "
+                         f"{target_build} only (requested {build}). Change defaults.target_build in project.yaml "
+                         f"to use {build}.")
+    build = build or target_build
     if name == "vep":
         return install_vep_cache(project, build=build)
     if name not in PROVIDERS:

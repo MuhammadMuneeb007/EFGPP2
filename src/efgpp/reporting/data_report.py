@@ -320,6 +320,13 @@ class ReportBuilder:
         ref = Section("reference", "18. Reference knowledge")
         enabled = [{"resource": n, "enabled": "yes"} for n in self.project.resources.enabled_names()]
         ref.tables += [_table("Enabled in resources.yaml", enabled), _table("Installed resources", res)]
+        gwas = [{"id": a.source_id, "trait": a.metadata.get("trait"), "variants": a.feature_count,
+                 "build (input)": (a.metadata.get("gwaslab_report") or {}).get("build_detected"),
+                 "lifted": (a.metadata.get("gwaslab_report") or {}).get("lifted"), "build": a.genome_build,
+                 "gwaslab": a.tool_version, "path": a.path}
+                for a in self.store.find(artifact_type="gwas_sumstats")]
+        if gwas:
+            ref.tables.append(_table("GWAS summary statistics (GWASLab)", gwas))
         ver = Section("resource-versions", "22. Resource versions")
         used = [{"artifact": a.artifact_id, "name": a.artifact_name, "resources": json.dumps(a.resource_versions)}
                 for a in self.store.find() if a.resource_versions]

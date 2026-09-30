@@ -32,6 +32,7 @@ from efgpp.data.validation import ValidationReport, plural
 from efgpp.resources.checksums import checksum_paths
 
 BUILD_SAMPLE_VARIANTS = 200_000
+_REFERENCE_CHECKS: dict[str, object] = {}
 
 
 class GenotypeAdapter(DataAdapter):
@@ -89,7 +90,22 @@ class GenotypeAdapter(DataAdapter):
             variants = None
         panel = self.project.resource_root / "genomes" / "build_marker_panel.tsv"
         return infer_build(declared=declared, variants=variants, vcf_meta=meta, fastas=self._fastas(),
-                           marker_panel=panel if panel.exists() else None)
+                           marker_panel=panel if panel.exists() else None,
+                           reference_check=self._reference_check(fs, variants))
+
+    def _reference_check(self, fs: GenotypeFileset, variants: pl.DataFrame | None) -> object:
+        """Ensembl reference bases + pyliftover (cached per fileset within this process)."""
+        from efgpp.data.genotype.liftover import check_reference_bases, offline
+
+        if variants is None or offline() or not self.project.config.defaults.online_build_check:
+            return None
+        key = str(fs.prefix)
+        if key not in _REFERENCE_CHECKS:
+            try:
+                _REFERENCE_CHECKS[key] = check_reference_bases(variants, self.project.resource_root)
+            except Exception:  # noqa: BLE001 - network problems leave the other evidence in charge
+                _REFERENCE_CHECKS[key] = None
+        return _REFERENCE_CHECKS[key]
 
     # ------------------------------------------------------------------ lifecycle
     def inspect(self) -> dict[str, Any]:
@@ -159,6 +175,13 @@ class GenotypeAdapter(DataAdapter):
         if build.confident:
             methods = ", ".join(sorted({e.method for e in build.evidence if e.supports == build.build}))
             rep.ok(f"genome build {build.build.value} (confidence {build.confidence:.0%}; {methods})")
+            for e in build.evidence:
+                if e.method == "reference_bases_pyliftover":
+                    rep.info(e.detail)
+            target = self.project.config.defaults.target_build
+            if build.build.value != target:
+                rep.info(f"will be lifted {build.build.value} -> {target} with pyliftover (step harmonize.{self.source.id}); "
+                         "the original files are not changed")
         else:
             details = "; ".join(f"{e.method}: {e.detail}" for e in build.evidence) or "no evidence"
             rep.fail(

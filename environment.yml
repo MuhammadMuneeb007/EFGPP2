@@ -39,6 +39,7 @@ dependencies:
   - platformdirs>=4.2
   - psutil>=5.9
   - uv>=0.4
+  - pyliftover>=0.4.1
   # extra: omics
   - anndata>=0.10
   - mudata>=0.3

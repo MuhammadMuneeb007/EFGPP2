@@ -78,11 +78,17 @@ def build_plan(project: Project) -> list[Step]:
                    needs=["validate"], source_id=source.id)
         steps.append(std)
         if modality == Modality.GENOTYPE:
-            qc = _tool_gate(project, Step(
+            harm = _tool_gate(project, Step(
+                f"harmonize.{source.id}", "harmonize", "genotype_qc",
+                f"bring the genotype to {project.config.defaults.target_build} (pyliftover + PLINK 2; no-op if already there)",
+                needs=[std.id], tools=["plink2"], env="genetics", threads=cores, mem_mb=16000, runtime_min=120,
+                source_id=source.id))
+            steps.append(harm)
+            qc = _gated_after(harm, _tool_gate(project, Step(
                 f"genotype_qc.{source.id}", "genotype_qc", "genotype_qc",
                 "sample/variant missingness, MAF, HWE, heterozygosity, LD pruning, KING kinship, sex check",
-                needs=[std.id], tools=["plink2"], env="genetics", threads=cores, mem_mb=16000, runtime_min=240,
-                source_id=source.id))
+                needs=[harm.id], tools=["plink2"], env="genetics", threads=cores, mem_mb=16000, runtime_min=240,
+                source_id=source.id)))
             steps.append(qc)
             genotype_qc_steps[source.id] = qc.id
             steps.append(_gated_after(qc, _tool_gate(project, Step(
@@ -103,6 +109,13 @@ def build_plan(project: Project) -> list[Step]:
         else:
             steps.append(Step(f"qc.{source.id}", "qc", "prepare", f"profile and QC {modality.value} {source.id}",
                               needs=[std.id], source_id=source.id))
+
+    for g in data.gwas:
+        steps.append(_tool_gate(project, Step(
+            f"gwas.{g.id}", "gwas", "annotation",
+            f"GWASLab: basic_check, infer_build, liftover to {project.config.defaults.target_build} ({g.trait})",
+            needs=["validate"], tools=["gwaslab"], env="gwaslab", threads=1, mem_mb=16000, runtime_min=120,
+            source_id=g.id)))
 
     for modality, cfg in data.predicted.items():
         if not cfg.enabled:
@@ -224,6 +237,14 @@ def run_step(project: Project, step: Step, threads: int | None = None) -> dict[s
     elif kind == "qc":
         qc = mgr.qc(step.source_id)  # type: ignore[arg-type]
         result["status"] = qc.status.value if qc else None
+    elif kind == "gwas":
+        from efgpp.data.gwas import run_gwas
+
+        result.update(run_gwas(project, step.source_id, step_id=step.id, threads=threads))  # type: ignore[arg-type]
+    elif kind == "harmonize":
+        from efgpp.data.genotype.harmonization import harmonize_genotype
+
+        result.update(harmonize_genotype(project, step.source_id, step_id=step.id, threads=threads))  # type: ignore[arg-type]
     elif kind == "genotype_qc":
         from efgpp.data.genotype.qc import register_qc_outputs, run_genotype_qc
 

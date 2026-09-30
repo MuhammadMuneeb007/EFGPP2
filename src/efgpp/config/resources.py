@@ -19,6 +19,7 @@ class ResourceEntry(OpenModel):
 
 class GenomeResource(ResourceEntry):
     enabled: bool = True
+    # Must match project.yaml defaults.target_build (GRCh38); resources are installed for it.
     build: Literal["GRCh37", "GRCh38"] = "GRCh38"
     auto_download: bool = True
     fasta: str | None = None

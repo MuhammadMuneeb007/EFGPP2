@@ -138,6 +138,22 @@ class ClinicalSource(SourceBase):
         return self
 
 
+class GwasSource(StrictModel):
+    """GWAS summary statistics (reference knowledge, not participant data), processed with GWASLab:
+    load -> basic_check -> infer_build -> liftover to the target build (GRCh38)."""
+
+    id: str = Field(pattern=ID_PATTERN)
+    path: str
+    trait: str  # free text describing the GWAS trait; never interpreted by the code
+    build: str = "auto"  # GRCh37 | GRCh38 | auto (GWASLab infer_build)
+    fmt: str = "auto"  # GWASLab format name (e.g. ssf, gwascatalog, plink2, regenie) or auto
+    # GWASLab keyword -> column name, e.g. {"snpid": "SNP", "chrom": "CHR", "pos": "BP", "ea": "A1",
+    # "nea": "A2", "beta": "BETA", "OR": "OR", "se": "SE", "p": "P", "n": "N", "eaf": "EAF", "info": "INFO"}
+    columns: dict[str, str] = {}
+    n: int | None = None  # constant sample size when the file has no N column
+    description: str | None = None
+
+
 class ObservedSources(StrictModel):
     genotype: list[GenotypeSource] = []
     phenotypes: list[PhenotypeSource] = []
@@ -295,10 +311,12 @@ class DataConfig(StrictModel):
     simulation: SimulationConfig = SimulationConfig()
     events: EventsSpec | None = None
     biospecimens: BiospecimensSpec | None = None
+    # GWAS summary statistics (reference knowledge; processed with GWASLab).
+    gwas: list[GwasSource] = []
 
     @model_validator(mode="after")
     def _unique_ids(self) -> DataConfig:
-        seen: dict[str, str] = {}
+        seen: dict[str, str] = {g.id: "gwas" for g in self.gwas}
         for modality, source in self.iter_sources():
             if source.id in seen:
                 raise ValueError(
@@ -336,7 +354,7 @@ class DataConfig(StrictModel):
         raise KeyError(f"unknown phenotype {key!r}")
 
     def next_id(self, prefix: str) -> str:
-        used = {s.id for _, s in self.iter_sources()}
+        used = {s.id for _, s in self.iter_sources()} | {g.id for g in self.gwas}
         n = 1
         while f"{prefix}{n:03d}" in used:
             n += 1

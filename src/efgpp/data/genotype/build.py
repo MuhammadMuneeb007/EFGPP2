@@ -1,6 +1,8 @@
 """Genome build inference (GRCh37 vs GRCh38) from several independent lines of evidence.
 
 Evidence, strongest first:
+  0. reference bases + pyliftover - alleles of sampled SNVs vs the GRCh37 and GRCh38 reference
+                                  (Ensembl), confirmed by lifting with pyliftover (liftover.py)
   1. reference FASTA concordance - REF alleles of sampled variants vs each build's FASTA
   2. user metadata              - an explicit genome_build in data.yaml
   3. VCF header                 - ##reference / ##contig lengths / ##assembly
@@ -16,6 +18,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 
@@ -236,6 +239,22 @@ def evidence_from_marker_panel(variants: pl.DataFrame, panel: Path) -> list[Evid
     return [Evidence("marker_panel", None, 0.0, f"37: {m37}, 38: {m38} of {total}")]
 
 
+def evidence_from_reference_check(check: Any) -> list[Evidence]:
+    """Turn a liftover.ReferenceCheck into evidence."""
+    if check is None:
+        return []
+    detail = (f"allele concordance with the reference: GRCh37 {check.rate37:.0%}, GRCh38 {check.rate38:.0%} "
+              f"({check.tested} SNVs)")
+    if check.lifted_rate is not None:
+        detail += f"; pyliftover {check.lifted_direction}: {check.lifted_rate:.0%} of lifted SNVs match"
+    best = GenomeBuild.GRCH37 if check.rate37 > check.rate38 else GenomeBuild.GRCH38
+    hi, lo = max(check.rate37, check.rate38), min(check.rate37, check.rate38)
+    lift_ok = check.lifted_rate is None or check.lifted_rate >= 0.9
+    if hi >= 0.9 and lo <= 0.8 and lift_ok:
+        return [Evidence("reference_bases_pyliftover", best, 1.0, detail)]
+    return [Evidence("reference_bases_pyliftover", None, 0.0, "inconclusive: " + detail)]
+
+
 def infer_build(
     *,
     declared: str | None,
@@ -243,8 +262,9 @@ def infer_build(
     vcf_meta: list[str] | None = None,
     fastas: dict[GenomeBuild, Path] | None = None,
     marker_panel: Path | None = None,
+    reference_check: Any = None,
 ) -> BuildInference:
-    evidence: list[Evidence] = []
+    evidence: list[Evidence] = evidence_from_reference_check(reference_check)
     decl = GenomeBuild.normalize(declared) if declared else GenomeBuild.AUTO
     if decl in BUILDS:
         evidence.append(Evidence("user_metadata", decl, 0.8, f"declared {declared}"))

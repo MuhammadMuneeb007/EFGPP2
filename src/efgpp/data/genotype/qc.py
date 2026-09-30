@@ -53,11 +53,17 @@ def load_genotype_input(project: Project, source_id: str) -> GenotypeInput:
     from efgpp.data.genotype.formats import read_samples
 
     _, src = project.data.get_source(source_id)
+    target = project.config.defaults.target_build
     with Registry.open(project) as reg:
         store = ArtifactStore(reg)
-        art = store.latest(source_id=source_id, artifact_type="source")
-        if art is None:
+        source_art = store.latest(source_id=source_id, artifact_type="source")
+        if source_art is None:
             raise RuntimeError(f"{source_id} is not registered; run `efgpp data prepare`")
+        lifted = store.latest(source_id=source_id, artifact_type="liftover_genotype")
+        art = lifted if lifted is not None and lifted.genome_build == target else source_art
+        if art.genome_build not in (None, target):
+            raise RuntimeError(f"{source_id} is {art.genome_build}, not the target build {target}; "
+                               f"run the harmonize.{source_id} step first")
         aliases = reg.frame(
             "SELECT native_id, participant_id FROM sample_aliases WHERE source_id = ?", [source_id]
         )
@@ -285,6 +291,9 @@ def register_qc_outputs(project: Project, source_id: str, out: QCRunOutputs, ste
     with Registry.open(project) as reg:
         store = ArtifactStore(reg)
         src = store.latest(source_id=source_id, artifact_type="source")
+        lifted = store.latest(source_id=source_id, artifact_type="liftover_genotype")
+        if lifted is not None and lifted.genome_build == project.config.defaults.target_build:
+            src = lifted  # QC ran on the genotype lifted to the target build
         parent = [src.artifact_id] if src and src.artifact_id else []
         build = src.genome_build if src else None
         common: dict[str, Any] = dict(origin=Origin.DERIVED, source_id=source_id, genome_build=build, tool="plink2",

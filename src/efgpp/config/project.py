@@ -21,6 +21,11 @@ class SpeciesConfig(StrictModel):
 
 class DefaultsConfig(StrictModel):
     genome_build: str = "auto"
+    # Every genotype, reference panel and GWAS file is lifted to this build (pyliftover / GWASLab).
+    target_build: Literal["GRCh38", "GRCh37"] = "GRCh38"
+    # Build check against the Ensembl reference sequence + pyliftover (needs internet; set
+    # EFGPP_OFFLINE=1 or false here to rely on local evidence only).
+    online_build_check: bool = True
 
 
 class StorageConfig(StrictModel):

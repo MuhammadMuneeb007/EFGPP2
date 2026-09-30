@@ -62,6 +62,7 @@ so users never switch environments by hand. See README → *Install*.
 | **filelock** | Cross-process lock around the DuckDB registry (DuckDB allows one writer) | `data/registry.py` |
 | **psutil** | Peak memory / CPU time of external tools; total RAM detection | `data/provenance.py`, `setup/platform.py` |
 | **platformdirs**, **fsspec** | Declared for cache locations and remote file systems | — |
+| **pyliftover** | Coordinate liftover GRCh37↔GRCh38 with local UCSC chain files; build check confirmation | `data/genotype/liftover.py`, `harmonization.py` |
 | **hashlib** (stdlib) | SHA-256 artifact identity | `resources/checksums.py` |
 | **blake3** *(extra `fast`)* | Optional fast local integrity hashing | `resources/checksums.py` |
 | **sqlite3** (stdlib) | Reading PredictDB model metadata (`.db` files) | `data/predicted/metaxcan.py` |
@@ -106,6 +107,7 @@ called automatically by `efgpp setup data`) downloads it from its official sourc
 | **MetaXcan / PrediXcan** (`Predict.py`) | `metaxcan` | Genetically predicted expression from PredictDB models | `data/predicted/metaxcan.py` |
 | **Snakemake** (+ `snakemake-executor-plugin-slurm`) | `core` | Scheduling, parallelism, restarts, SLURM execution | `workflow/snakemake.py` |
 | **MultiQC** | `reporting` | Aggregates QC tables (`*_mqc.tsv`) next to the EFGPP report | `reporting/data_report.py` |
+| **GWASLab** (`gwaslab-python`) | `gwaslab` | GWAS summary statistics: load, `basic_check`, `infer_build`, `liftover` to GRCh38 | `data/gwas.py` → `data/gwas_gwaslab_job.py` |
 | **Pixi** / **mamba** / micromamba / conda | system | Creating the per-purpose environments from conda-forge + Bioconda | `setup/pixi.py`, `setup/micromamba.py` |
 | **uv** | EFGPP env | Fast isolated Python environments for tools installed by `efgpp setup tools` | `setup/installers.py` |
 | **Apptainer / Docker** | system | Optional container runtime for Linux-only tools | `setup/containers.py` |
@@ -152,7 +154,9 @@ REGISTER → INSPECT → VALIDATE → ID RESOLUTION → TIMELINE/BIOSPECIMENS �
 | 6 | Timeline and biospecimens | Polars + DuckDB | `data/timeline.py`, `data/biospecimens.py` | `events`, `biospecimens`, `assays` tables |
 | 7 | Standardize tables | Polars → Parquet (zstd), Pandera contracts | phenotype/covariate/clinical adapters | `phenotypes/<id>/observations.parquet`, `data/observed/covariates/…` |
 | 8 | Standardize omics | AnnData + Zarr (fallback Parquet) | `data/adapters/expression.py` (+ methylation/proteomics/metabolomics) | `data/<origin>/<modality>/<id>/<id>.zarr` |
-| 9 | Genome-build inference | Python: contig lengths, coordinate bounds, FASTA REF concordance (own `.fai` reader), optional rsID panel | `data/genotype/build.py` | `build_inference` metadata; validation fails when uncertain |
+| 9 | Genome-build inference | Ensembl reference bases (GRCh37 + GRCh38) confirmed with **pyliftover**; contig lengths; coordinate bounds; FASTA REF concordance; optional rsID panel | `data/genotype/build.py`, `liftover.py` | `build_inference` metadata; validation fails when uncertain |
+| 9b | Harmonization to GRCh38 | **pyliftover** (positions) + **PLINK 2** (`--update-map --sort-vars --make-pgen`) | `data/genotype/harmonization.py` (step `harmonize.<id>`) | `data/derived/genotype_qc/<id>/liftover/<id>_GRCh38.*`, liftover report; QC uses this copy |
+| 9c | GWAS summary statistics | **GWASLab** (own environment) with the project's chain files | `data/gwas.py` (step `gwas.<id>`) | `resources/gwas/<id>/<id>.GRCh38.parquet` + GWASLab report |
 | 10 | Phenotype / covariate / omics QC | Polars, NumPy | `adapter.qc()` | `qc/<modality>/<id>_qc_summary.json`, `qc_runs`, `qc_metrics` |
 | 11 | Genotype QC | **PLINK 2** | `data/genotype/qc.py` | `qc/genotype/<id>/sample_qc.parquet`, `variant_qc.parquet`, QC-passed PGEN in `data/derived/genotype_qc/` |
 | 12 | Relatedness | **PLINK 2** `--make-king-table`; Python greedy removal | `data/genotype/qc.py`, `relatedness.py` | `data/derived/kinship/<id>_kinship.parquet` |
@@ -286,8 +290,10 @@ be refit inside training folds.
 
 | Area | How it was verified |
 |---|---|
-| Registry, validation, standardization, timeline, availability, report, snapshots, migration, CLI | Automated tests (75) on Windows |
+| Registry, validation, standardization, timeline, availability, report, snapshots, migration, CLI | Automated tests (80) on Windows |
 | Genotype QC, kinship, PCA | End-to-end tests with the real PLINK 2 binary |
+| Build check + liftover | Real Ensembl/UCSC check: GRCh37-derived alleles → GRCh37 (100% vs 51%, pyliftover-lifted 100%), GRCh38 → GRCh38; harmonize step tested end to end with PLINK 2 and pyliftover |
+| GWASLab step | Job wiring tested with a mocked GWASLab run; GWASLab environment solved for linux-64; not yet run on Linux |
 | VEP, OpenCRAVAT parsers; ClinVar/AlphaMissense lookups | Tests on small synthetic files; the external tools were not run |
 | PrediXcan | Output handling tested with a mocked run |
 | Snakefile and SLURM generation | Tested; not executed |
@@ -394,3 +400,42 @@ efgpp data migrate --source /data/ascher02/uqmmune1/ANNOVAR/migraine --profile l
 ```
 
 The source folder is never modified.
+
+---
+
+## 12. Genome build policy: everything in GRCh38
+
+`project.yaml: defaults.target_build: GRCh38`. Every dataset is brought to this build; the
+originals are never modified and every lifted copy is a new artifact with its own lineage.
+
+| Data | How the build is determined | How it becomes GRCh38 |
+|---|---|---|
+| Genotypes (PLINK/VCF/BGEN) | 1. **reference bases + pyliftover**: ~80 SNVs are compared with the GRCh37 and GRCh38 reference (Ensembl REST, batched); the build whose reference matches the alleles (~100% vs ~50%) wins, and the positions lifted with pyliftover must match the other build's reference too. 2. contig lengths (VCF), coordinate bounds (positions past chromosome ends), local FASTA, declared value. Contradictions stop validation. | step `harmonize.<id>`: pyliftover converts positions (UCSC chain), PLINK 2 writes a new PGEN; unmapped, cross-chromosome and reverse-strand variants are excluded and listed in the liftover report. QC, PCA, annotation and prediction then use the GRCh38 copy. |
+| Reference panels (`ld_reference`) | declared `genome_build`, else the same evidence | lifted once into `resources/ld_reference/<name>_GRCh38` |
+| GWAS summary statistics | GWASLab `infer_build` (HapMap3 positions shipped with GWASLab) or the declared build | GWASLab `liftover(to_build="38", chain_path=resources/liftover/…)` |
+| Downloaded resources (ClinVar, AlphaMissense, VEP cache, genome, PGS scoring files) | — | installed for GRCh38 only; requesting GRCh37 is refused |
+| Predicted expression (PredictDB GTEx v8) | models are GRCh38 | uses the GRCh38 genotype |
+
+Chain files (`hg19ToHg38.over.chain.gz`, `hg38ToHg19.over.chain.gz`) are downloaded once from
+UCSC into `resources/liftover/` and passed explicitly to pyliftover and GWASLab, so no tool
+downloads anything into the home directory. `EFGPP_OFFLINE=1` (or
+`defaults.online_build_check: false`) skips the Ensembl check and relies on local evidence.
+
+### GWAS summary statistics with GWASLab
+
+```bash
+efgpp setup tools gwaslab                              # software/envs/gwaslab (never the efgpp env)
+efgpp data add gwas --path <file> --trait <text> [--build auto] [--fmt auto] \
+    [--col chrom=CHR --col pos=BP --col snpid=SNP --col ea=A1 --col nea=A2 --col p=P ...] [--n N]
+efgpp data validate                                    # file readable, mapped columns present
+efgpp data prepare                                     # step gwas.<id>
+```
+
+`--col` uses GWASLab keyword names (`snpid rsid chrom pos ea nea eaf beta se p OR z n info`).
+The job (`data/gwas_gwaslab_job.py`, run by the environment's Python) does
+`Sumstats(...)` → `basic_check(remove=True, remove_dup=True)` → `infer_build()` →
+`liftover(...)` → Parquet, and writes a JSON report (rows loaded / after checks / after
+liftover, detected build, GWASLab version) to `resources/gwas/<id>/` and `qc/gwas/`. The result
+is a REFERENCE artifact (`gwas_sumstats`) in GRCh38; choosing variants or thresholds for a
+target phenotype remains a Representation-layer decision. `efgpp data migrate` adds legacy GWAS
+files as GWAS sources automatically.

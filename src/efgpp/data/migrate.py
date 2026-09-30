@@ -126,7 +126,7 @@ def scan(source: Path, profile: str = "legacy-efgpp") -> list[PlanItem]:
         elif name.endswith((".gz", ".txt", ".tsv", ".csv", ".assoc", ".glm.logistic", ".glm.linear")) and \
                 len(GWAS_COLUMNS & {c.upper() for c in _columns(f)}) >= 3:
             items.append(PlanItem("gwas", str(f), "sumstats", {"columns": _columns(f)[:12]},
-                                  "register GWAS summary statistics as reference resource"))
+                                  "add as GWAS (GWASLab: basic_check, infer_build, liftover to GRCh38)"))
         else:
             items.append(PlanItem("unknown", str(f), None, {"relative": rel}, "ignored (review)"))
     _dedupe_names(items)
@@ -172,7 +172,7 @@ def apply(project: Project, source: Path, profile: str, mode: StorageMode, plan_
         done.setdefault(kind, []).append(what)
 
     for it in items:
-        if it.path in known_paths:
+        if it.path in known_paths or it.path in {g.path for g in project.data.gwas}:
             continue
         if it.kind == "genotype":
             sid = project.data.next_id("GENO")
@@ -191,6 +191,13 @@ def apply(project: Project, source: Path, profile: str, mode: StorageMode, plan_
                                                   participant_id_column=it.details["id_column"],
                                                   variables=it.details["variables"]))
             note("covariates", sid)
+        elif it.kind == "gwas":
+            from efgpp.config.data import GwasSource
+
+            gid = project.data.next_id("GWAS")
+            trait = Path(it.path).parent.name if Path(it.path).parent != source.resolve() else Path(it.path).name.split(".")[0]
+            project.data.gwas.append(GwasSource(id=gid, path=it.path, trait=trait, build="auto"))
+            note("gwas", gid)
         elif it.kind == "expression":
             sid = project.data.next_id("RNA")
             obs.expression.append(OmicsSource(id=sid, path=it.path, mode=mode))
@@ -203,7 +210,7 @@ def apply(project: Project, source: Path, profile: str, mode: StorageMode, plan_
         store = ArtifactStore(reg)
         for it in items:
             p = Path(it.path)
-            if it.kind in ("gwas", "annotations"):
+            if it.kind == "annotations":
                 checksum = str(checksum_paths([p]))
                 rid = f"RES_legacy_{it.kind}_{p.name}"
                 reg.upsert("resources", {

@@ -15,6 +15,9 @@ from efgpp.data.simulate import simulate_genotypes, simulate_phenotype
 from efgpp.project import Project, init_project
 
 N = 120  # participants
+
+# Tests never call Ensembl / UCSC for build checks or chain files.
+os.environ["EFGPP_OFFLINE"] = "1"
 M = 400  # variants
 
 

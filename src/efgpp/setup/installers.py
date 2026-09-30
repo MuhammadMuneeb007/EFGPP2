@@ -85,6 +85,8 @@ CONDA_TOOLS: dict[str, tuple[str, list[str], list[str], list[str]]] = {
     "vep": ("vep", ["ensembl-vep", "perl", "htslib"], [], ["vep", "vep_install"]),
     "predixcan": ("predixcan", ["python=3.10", "numpy<2", "scipy", "pandas<2.3", "statsmodels", "h5py", "cyvcf2",
                                 "pip"], ["bgen", "pyliftover"], []),
+    # GWASLab pins pysam/matplotlib/pandas versions: it must never share the efgpp environment.
+    "gwaslab": ("gwaslab", ["python=3.11", "gwaslab", "pyliftover", "pyarrow"], [], ["python:gwaslab-python"]),
 }
 
 
@@ -319,6 +321,14 @@ def install_python_tool(tool: str, root: Path, info: PlatformInfo, say: Progress
     return InstallResult(tool, f"Python environment {prefix.name} ({', '.join(requirements)})", prefix)
 
 
+def install_gwaslab_venv(root: Path, info: PlatformInfo, say: Progress) -> InstallResult:
+    """Fallback: GWASLab in its own Python 3.11 virtual environment."""
+    prefix = root / "envs" / "gwaslab-venv"
+    py = create_venv(prefix, ["gwaslab", "pyliftover", "pyarrow"], say, python="3.11")
+    _expose(py, root / "bin", "gwaslab-python")
+    return InstallResult("gwaslab", "Python environment gwaslab-venv (gwaslab, pyliftover)", prefix)
+
+
 def install_metaxcan(root: Path, info: PlatformInfo, say: Progress) -> InstallResult:
     """Fallback: MetaXcan source (GitHub archive, no git needed) + its own Python 3.11 venv."""
     prefix = root / "envs" / "predixcan-venv"
@@ -399,6 +409,7 @@ INSTALLERS: dict[str, Callable[[Path, PlatformInfo, Progress], InstallResult]] =
     "multiqc": lambda r, i, s: install_python_tool("multiqc", r, i, s),
     "oc": lambda r, i, s: install_python_tool("oc", r, i, s),
     "predixcan": install_metaxcan,
+    "gwaslab": lambda r, i, s: install_gwaslab_venv(r, i, s),
     "vep": install_vep_container,
 }
 
@@ -409,6 +420,7 @@ COMPONENT_TOOLS = {
     "annotation": ["vep", "oc"],
     "metaxcan": ["predixcan"],
     "reporting": ["multiqc"],
+    "gwas": ["gwaslab"],
 }
 
 
@@ -471,10 +483,11 @@ def install_conda_tool(tool: str, root: Path, info: PlatformInfo, say: Progress)
     for pkg in pip:
         _run([str(py), "-m", "pip", "install", "--no-input", pkg], root, log)
     for command in commands:
-        target = env_bin(root, env) / command
+        source_name, _, exposed_name = command.partition(":")
+        target = env_bin(root, env) / source_name
         if not target.exists():
-            raise InstallError(f"{command} missing from the {env} environment (log: {log})")
-        _expose(target, root / "bin")
+            raise InstallError(f"{source_name} missing from the {env} environment (log: {log})")
+        _expose(target, root / "bin", exposed_name or None)
     location = env_prefix(root, env)
     if tool == "predixcan":
         location = metaxcan_source(root, py, info, say)

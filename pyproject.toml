@@ -42,6 +42,7 @@ dependencies = [
     "psutil>=5.9",
     # Fast isolated Python environments for tools installed by `efgpp setup tools`.
     "uv>=0.4",
+    "pyliftover>=0.4.1",
 ]
 
 [project.optional-dependencies]

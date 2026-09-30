@@ -20,7 +20,7 @@ from efgpp.data.genotype.formats import (
     resolve_fileset,
     vcf_samples,
 )
-from efgpp.data.genotype.harmonization import ChainMap, liftover_variants
+from efgpp.data.genotype.liftover import Lifter, lift_table
 from efgpp.data.genotype.loader import read_plink_table
 from efgpp.data.genotype.relatedness import classify_pairs, greedy_unrelated_removal
 from efgpp.data.simulate import read_bed_dosage, simulate_genotypes, write_bed
@@ -119,13 +119,14 @@ def test_chain_liftover(tmp_path: Path) -> None:
     chain.write_text(
         "chain 1000 chr1 1000 + 0 300 chr1 1000 + 10 310 1\n100 50 50\n150\n\n"
         "chain 500 chr2 1000 + 0 100 chr3 1000 - 0 100 2\n100\n")
-    cm = ChainMap.from_file(chain)
-    assert cm.map("1", 1) == ("1", 11, "+")
-    assert cm.map("chr1", 160) == ("1", 170, "+")
-    assert cm.map("1", 120) is None  # in a gap
-    v = pl.DataFrame({"variant_id": ["a", "b", "c", "d"], "chromosome": ["1", "1", "2", "5"], "position": [1, 120, 5, 5]})
-    out = liftover_variants(v, cm)
-    assert out.get_column("status").to_list() == ["mapped", "unmapped", "chromosome_changed", "unmapped"]
+    lifter = Lifter(chain)  # pyliftover over a local chain file
+    assert lifter.lift("1", 1) == ("1", 11, "+")
+    assert lifter.lift("chr1", 160) == ("1", 170, "+")
+    assert lifter.lift("1", 120) is None  # in a gap
+    v = pl.DataFrame({"variant_id": ["a", "b", "c", "d", "e"], "chromosome": ["1", "1", "2", "5", "1"],
+                      "position": [1, 120, 5, 5, 0]})
+    out = lift_table(v, lifter)
+    assert out.get_column("status").to_list() == ["mapped", "unmapped", "chromosome_changed", "unmapped", "unplaced"]
 
 
 def test_simulated_cohort_is_deterministic(tmp_path: Path) -> None:

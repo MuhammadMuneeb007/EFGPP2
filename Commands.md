@@ -3,6 +3,8 @@
 Run on the **login node** (the downloads need internet access). Everything is installed inside
 the project directory you are in — tools in `software/`, reference data in `resources/`, logs in
 `logs/` — never in your home directory and never into the `efgpp` environment itself.
+Everything is kept in **GRCh38**: genotypes, reference panels and GWAS files in GRCh37 are lifted
+automatically (pyliftover / GWASLab; chain files in `resources/liftover/`).
 
 ```bash
 # ---------------------------------------------------------------------------
@@ -25,7 +27,7 @@ cd /data/ascher02/uqmmune1/EFGPP/efgpp_projects/my_project
 # ---------------------------------------------------------------------------
 # 3. Data-layer tools: each in its OWN conda env under ./software/envs/<tool>
 #    (plink2, plink, bcftools+tabix+bgzip, snakemake, multiqc, oc, vep+perl,
-#    predixcan); official downloads only if conda fails; flashpca2 = official binary
+#    predixcan, gwaslab); official downloads only if conda fails; flashpca2 = official binary
 # ---------------------------------------------------------------------------
 efgpp setup tools                                # all tools -> ./software
 # efgpp setup tools vep                          # one tool
@@ -63,7 +65,7 @@ efgpp setup check                                # every tool, toolkit, R packag
 # efgpp setup check --toolkits r,prs             # only some toolkits
 
 eval "$(efgpp setup path)"                       # put ./software/bin on PATH for this shell
-for t in plink2 plink bcftools tabix bgzip flashpca snakemake multiqc oc predixcan vep \
+for t in plink2 plink bcftools tabix bgzip flashpca snakemake multiqc oc predixcan vep gwaslab-python \
          perl R Rscript gcta64 gctb gemma bolt PRSice ldak vcftools PRScs.py SDPR ldsc.py; do
   printf '%-12s ' "$t"
   command -v "$t" >/dev/null && echo "OK       $(command -v "$t")" || echo "MISSING"

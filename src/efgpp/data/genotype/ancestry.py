@@ -1,8 +1,10 @@
 """Genetic ancestry estimation by projection onto a labelled reference panel.
 
 Requires `resources.yaml: ld_reference` with
-    path:        PLINK2 prefix (pgen/pvar/psam) of the reference panel
-    populations: TSV with columns IID and population
+    path:         PLINK2 prefix (pgen/pvar/psam) of the reference panel
+    populations:  TSV with columns IID and population
+    genome_build: optional; detected otherwise. Panels not in the target build (GRCh38) are
+                  lifted once with pyliftover into resources/ld_reference/<name>_GRCh38.
 Both reference and cohort samples are projected with the *same* PLINK2 --score command so
 their coordinates are directly comparable; each participant is assigned the population
 of the nearest reference centroid, with the distance ratio as a confidence measure.
@@ -72,7 +74,12 @@ def run_ancestry(project: Project, source_id: str, *, step_id: str | None = None
     work.mkdir(parents=True)
 
     cohort_ids = set(read_variants(resolve_fileset(Path(qc.path), "pgen")).get_column("variant_id").to_list())
-    ref_fs = resolve_fileset(ref_prefix, "auto")
+    # The reference panel must be in the project's target build (lifted once if it is not).
+    from efgpp.data.genotype.harmonization import ensure_target_build
+
+    ref_fs = ensure_target_build(
+        project, resolve_fileset(ref_prefix, "auto"), (ref_cfg.model_extra or {}).get("genome_build"),
+        project.resource_root / "ld_reference" / ref_prefix.name, step_id=step_id, threads=threads)
     overlap = [v for v in read_variants(ref_fs).get_column("variant_id").to_list() if v in cohort_ids]
     if len(overlap) < 100:
         raise RuntimeError(f"only {len(overlap)} variants shared with the reference panel (IDs must match)")

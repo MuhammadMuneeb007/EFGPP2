@@ -11,6 +11,10 @@ omics, timelines, biospecimens) into a validated, provenance-tracked, immutable
 **DataSnapshot**. The Representation layer consumes that snapshot by name; it never searches
 folders.
 
+Everything is kept in **GRCh38**: genotypes, reference panels and GWAS summary statistics in
+another build are lifted automatically (pyliftover; GWASLab for GWAS files) into new artifacts —
+see `Document.MD` §12.
+
 It is **phenotype-agnostic**: a phenotype is a configuration object (`binary`, `continuous`,
 `multiclass`, `ordinal`; survival/longitudinal types are declared for later). No disease or
 trait is hard-coded, and a test enforces that. The one trait-like token is the legacy
@@ -122,7 +126,7 @@ hand into `<install root>/opt/DBSLMM/software/dbslmm`.
 
 ```bash
 efgpp doctor                             # what is installed / missing
-pytest                                   # from the EFGPP2 folder; 75 tests
+pytest                                   # from the EFGPP2 folder; 80 tests
 ```
 
 ### If a tool cannot be installed with mamba/conda

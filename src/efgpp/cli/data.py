@@ -142,6 +142,35 @@ for _m, _p in ((Modality.EXPRESSION, "RNA"), (Modality.METHYLATION, "METH"), (Mo
     add_app.command(_m.value)(_add_omics(_m, _p))
 
 
+@add_app.command("gwas", context_settings={"allow_extra_args": True})
+def add_gwas(
+    ctx: typer.Context,
+    path: str = typer.Option(..., "--path", help="GWAS summary statistics file (any text/gz format)"),
+    trait: str = typer.Option(..., "--trait", help="free-text trait of this GWAS"),
+    build: str = typer.Option("auto", "--build", help="GRCh37 | GRCh38 | auto (GWASLab infer_build)"),
+    fmt: str = typer.Option("auto", "--fmt", help="GWASLab format (ssf, gwascatalog, plink2, regenie, ...) or auto"),
+    col: list[str] = typer.Option([], "--col", help="GWASLab keyword=column, e.g. --col chrom=CHR --col pos=BP"),
+    n: int | None = typer.Option(None, "--n", help="constant sample size if the file has no N column"),
+    source_id: str | None = typer.Option(None, "--id"),
+) -> None:
+    """Add GWAS summary statistics (processed with GWASLab and lifted to the target build)."""
+    from efgpp.config.data import GwasSource
+
+    project = load_project()
+    columns = {}
+    for item in [*col, *ctx.args]:
+        key, _, value = item.partition("=")
+        if not value:
+            console.print(f"[red]--col expects keyword=column, got {item!r}[/]")
+            raise typer.Exit(2)
+        columns[key.strip()] = value.strip()
+    gid = source_id or project.data.next_id("GWAS")
+    project.data.gwas.append(GwasSource(id=gid, path=user_path(project, path), trait=trait, build=build, fmt=fmt,
+                                        columns=columns, n=n))
+    project.save_data_config()
+    console.print(f"[green]✓[/] {gid} added ({trait}); processed by `efgpp data prepare` (step gwas.{gid})")
+
+
 @add_app.command("clinical")
 def add_clinical(
     path: str = typer.Option(..., "--path"),
@@ -170,6 +199,11 @@ def add_clinical(
 def remove(source_id: str = typer.Argument(..., help="source id, e.g. COV001")) -> None:
     """Remove a source from data.yaml (registered artifacts are kept for provenance)."""
     project = load_project()
+    if any(g.id == source_id for g in project.data.gwas):
+        project.data.gwas = [g for g in project.data.gwas if g.id != source_id]
+        project.save_data_config()
+        console.print(f"[green]✓[/] removed {source_id} (gwas) from data.yaml")
+        return
     try:
         modality, _ = project.data.get_source(source_id)
     except KeyError as exc:
