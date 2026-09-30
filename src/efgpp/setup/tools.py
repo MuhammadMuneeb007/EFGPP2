@@ -15,7 +15,14 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import platformdirs
+
 from efgpp.project import Project
+
+
+def shared_root() -> Path:
+    """Per-user install root shared by all projects (`efgpp setup tools --shared`)."""
+    return Path(platformdirs.user_data_dir("efgpp", appauthor=False))
 
 
 @dataclass(frozen=True)
@@ -48,7 +55,7 @@ TOOLS: dict[str, ToolSpec] = {
                  conda_package="ensembl-vep"),
         ToolSpec("oc", "annotation", "ANNOTATION", ("oc",), ("version",),
                  conda_package="open-cravat", optional=True),
-        ToolSpec("predixcan", "metaxcan", "PREDICTED OMICS", ("Predict.py",), None, optional=True,
+        ToolSpec("predixcan", "metaxcan", "PREDICTED OMICS", ("predixcan", "Predict.py"), None, optional=True,
                  description="MetaXcan/PrediXcan Predict.py"),
         ToolSpec("multiqc", "reporting", "REPORTING", ("multiqc",), conda_package="multiqc",
                  optional=True),
@@ -123,6 +130,11 @@ def resolve(project: Project | None, name: str) -> ResolvedTool:
                     p = directory / cand
                     if p.is_file():
                         return _finish(ResolvedTool(name, p, env, prefix), project)
+    shared = shared_root() / "bin"
+    for exe in spec.executables:
+        for cand in _candidate_names(exe):
+            if (shared / cand).is_file():
+                return _finish(ResolvedTool(name, shared / cand, "shared-bin"), project)
     for exe in spec.executables:
         found = shutil.which(exe)
         if found:

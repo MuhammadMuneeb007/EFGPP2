@@ -38,6 +38,7 @@ dependencies:
   - filelock>=3.13
   - platformdirs>=4.2
   - psutil>=5.9
+  - uv>=0.4
   # extra: omics
   - anndata>=0.10
   - mudata>=0.3

@@ -95,8 +95,44 @@ hypothesis), `reporting` (Kaleido/UpSetPlot), `standards` (Phenopackets validati
 
 ```bash
 efgpp doctor                             # what is installed / missing
-pytest                                   # from the EFGPP2 folder; 59 tests
+pytest                                   # from the EFGPP2 folder; 65 tests
 ```
+
+### If a tool cannot be installed with mamba/conda
+
+`efgpp setup data` first builds the tool environments (Pixi, else mamba/micromamba/conda). Any
+tool that is **still missing** is then downloaded from its **official source** and placed in the
+project, so a missing Bioconda package never blocks you. You can also do this directly:
+
+```bash
+cd ~/efgpp_projects/my_project
+efgpp setup tools                        # every missing tool
+efgpp setup tools plink2 snakemake multiqc   # only these
+efgpp setup tools --shared plink2        # once for all your projects (~/.local/share/efgpp)
+efgpp setup tools --force plink2         # reinstall
+```
+
+| Tool | How EFGPP gets it (Linux) | Needs |
+|---|---|---|
+| `plink2` | official binary from cog-genomics.org (AVX2 / AMD / x86_64 / ARM build chosen automatically) | internet |
+| `plink` (1.9) | official binary from cog-genomics.org | internet |
+| `flashpca2` | official static binary (GitHub release v2.0, x86_64) | internet |
+| `bcftools`, `tabix`, `bgzip` | built from the official htslib + bcftools release tarballs | `gcc`/`cc`, `make`, zlib headers (e.g. `module load gcc`) |
+| `snakemake` (+ SLURM plugin), `multiqc`, `oc` (OpenCRAVAT) | isolated Python environments created with uv from PyPI | internet |
+| `predixcan` (MetaXcan) | MetaXcan source from GitHub + its own Python 3.11 environment (uv downloads Python if needed) | internet |
+| `vep` | official `ensemblorg/ensembl-vep` image with `vep` / `vep_install` wrapper scripts | Apptainer/Singularity (or Docker) |
+
+Everything lands in `<project>/.efgpp/` (or `~/.local/share/efgpp/` with `--shared`):
+executables in `bin/`, Python environments in `envs/`, builds in `opt/`, images in
+`containers/`. EFGPP finds them automatically. To call them yourself from the shell:
+
+```bash
+eval "$(efgpp setup path)"               # puts .efgpp/bin (and the shared bin) on PATH
+plink2 --version && snakemake --version && multiqc --version
+```
+
+Tools you already have (e.g. `plink`, `bcftools` in your `efgpp` mamba env) are detected and
+skipped.
 
 ## Quick start
 
@@ -175,8 +211,8 @@ MetaXcan need WSL2 or Docker (`efgpp doctor` says so).
 
 ## Running on an HPC cluster
 
-- **Run `efgpp setup data` on a login node.** It downloads Pixi and Bioconda packages, and
-  compute nodes often have no internet access.
+- **Run `efgpp setup data` / `efgpp setup tools` on a login node.** They download packages,
+  binaries and images, and compute nodes often have no internet access.
 - **Keep projects on a shared filesystem** (home or project storage, not node-local `/tmp`), so
   compute jobs see the same `.efgpp/envs` and registry.
 - **Submit work** either through Snakemake (`efgpp data prepare --executor slurm`, set

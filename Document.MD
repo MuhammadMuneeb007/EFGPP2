@@ -77,7 +77,21 @@ Each tool lives in its own small environment under `.efgpp/envs/<env>/` (Pixi pr
 Pixi is unavailable or fails, the fastest conda-family tool found: mamba → micromamba → conda;
 set with `execution.environment_manager` / `fallback_environment_manager`; definitions in
 `workflow/envs/*.yaml`). `setup/tools.py` resolves each tool
-in this order: `project.yaml: execution.tools` override → `.efgpp/bin` → its environment → `PATH`.
+in this order: `project.yaml: execution.tools` override → `.efgpp/bin` → its environment →
+`~/.local/share/efgpp/bin` (shared) → `PATH`.
+
+When a tool cannot be obtained from conda, `setup/installers.py` (`efgpp setup tools`, also
+called automatically by `efgpp setup data`) downloads it from its official source:
+
+| Tool | Method | Source |
+|---|---|---|
+| PLINK 2, PLINK 1.9 | official binary (zip) → `bin/` | cog-genomics.org download pages (build chosen by OS/CPU/AVX2) |
+| FlashPCA2 | official static binary → `bin/flashpca` | github.com/gabraham/flashpca release v2.0 |
+| bcftools, tabix, bgzip | source build (`./configure && make && make install`, zlib only) → `opt/samtools`, linked in `bin/` | github.com/samtools htslib + bcftools latest releases |
+| Snakemake (+ SLURM plugin), MultiQC, OpenCRAVAT | uv (fallback venv + pip) Python environment → `envs/<name>`, linked in `bin/` | PyPI |
+| MetaXcan / PrediXcan | GitHub source archive → `opt/MetaXcan` + Python 3.11 environment (`envs/metaxcan`); `bin/predixcan` wrapper | github.com/hakyimlab/MetaXcan |
+| Ensembl VEP | container image → `containers/ensembl-vep.sif`; `bin/vep`, `bin/vep_install` wrappers | `ensemblorg/ensembl-vep` via Apptainer/Singularity or Docker |
+
 
 | Tool | Environment | Used for | Called from |
 |---|---|---|---|
@@ -91,6 +105,7 @@ in this order: `project.yaml: execution.tools` override → `.efgpp/bin` → its
 | **Snakemake** (+ `snakemake-executor-plugin-slurm`) | `core` | Scheduling, parallelism, restarts, SLURM execution | `workflow/snakemake.py` |
 | **MultiQC** | `reporting` | Aggregates QC tables (`*_mqc.tsv`) next to the EFGPP report | `reporting/data_report.py` |
 | **Pixi** / **mamba** / micromamba / conda | system | Creating the per-purpose environments from conda-forge + Bioconda | `setup/pixi.py`, `setup/micromamba.py` |
+| **uv** | EFGPP env | Fast isolated Python environments for tools installed by `efgpp setup tools` | `setup/installers.py` |
 | **Apptainer / Docker** | system | Optional container runtime for Linux-only tools | `setup/containers.py` |
 
 ---
@@ -246,9 +261,10 @@ be refit inside training folds.
 
 | Area | How it was verified |
 |---|---|
-| Registry, validation, standardization, timeline, availability, report, snapshots, migration, CLI | Automated tests (59) on Windows |
+| Registry, validation, standardization, timeline, availability, report, snapshots, migration, CLI | Automated tests (65) on Windows |
 | Genotype QC, kinship, PCA | End-to-end tests with the real PLINK 2 binary |
 | VEP, OpenCRAVAT parsers; ClinVar/AlphaMissense lookups | Tests on small synthetic files; the external tools were not run |
 | PrediXcan | Output handling tested with a mocked run |
 | Snakefile and SLURM generation | Tested; not executed |
+| Direct installers (`efgpp setup tools`) | Build selection unit-tested; binary and Python-environment installs run on Windows; Linux source build, Apptainer VEP and MetaXcan environment not yet run |
 | ROH, ancestry, AlphaGenome API, Pixi environments on Linux/macOS | Implemented, not yet exercised |

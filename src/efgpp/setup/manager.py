@@ -1,29 +1,24 @@
 """`efgpp setup data` / `efgpp setup annotation`: detect, install, test and lock.
 
-Scientific tools go into small isolated environments (Pixi preferred, Micromamba as
-fallback) under .efgpp/envs/<purpose>. On native Windows, where Bioconda has no builds,
-PLINK 2 is installed from its official Windows binary and Linux-only components are
-reported as requiring WSL2 or Docker.
+Scientific tools go into small isolated environments (Pixi preferred; mamba, micromamba or
+conda as fallback) under .efgpp/envs/<purpose>. Any tool still missing afterwards is
+downloaded from its official source by efgpp.setup.installers (binaries, source builds,
+Python environments, containers) into the project or the shared per-user folder.
 """
 
 from __future__ import annotations
 
 import importlib.util
-import re
-import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-import httpx
-
 from efgpp.data.registry import Registry, utcnow
 from efgpp.project import Project
-from efgpp.resources.downloader import download
 from efgpp.setup import micromamba, pixi
+from efgpp.setup.installers import COMPONENT_TOOLS, install_plink2, install_tools
 from efgpp.setup.platform import PlatformInfo, detect
 from efgpp.setup.tools import ToolNotFoundError, detect_version, resolve
 
-PLINK2_PAGE = "https://www.cog-genomics.org/plink/2.0/"
 CORE_MODULES = ("pydantic", "typer", "rich", "yaml", "polars", "pyarrow", "duckdb", "pandera", "numpy",
                 "scipy", "plotly", "jinja2", "httpx", "filelock")
 
@@ -48,47 +43,9 @@ class SetupReport:
         return not any(s.status == "failed" for s in self.steps)
 
 
-def plink2_asset(info: PlatformInfo, links: list[str]) -> str | None:
-    """Choose the official PLINK 2 build for this OS / CPU from the download-page links."""
-    if info.os == "windows":
-        prefs = ["plink2_win_avx2_", "plink2_win64_"] if info.avx2 else ["plink2_win64_"]
-    elif info.os == "darwin":
-        prefs = ["plink2_mac_arm64_"] if info.arch == "aarch64" else (["plink2_mac_avx2_", "plink2_mac_"] if info.avx2 else ["plink2_mac_"])
-    else:
-        if info.arch == "aarch64":
-            prefs = ["plink2_linux_arm64_", "plink2_linux_aarch64_"]
-        else:
-            vendor_amd = False
-            try:
-                with open("/proc/cpuinfo", encoding="utf-8") as fh:
-                    vendor_amd = "AuthenticAMD" in fh.read(4096)
-            except OSError:
-                pass
-            prefs = (["plink2_linux_amd_avx2_"] if vendor_amd else []) + (["plink2_linux_avx2_"] if info.avx2 else []) + ["plink2_linux_x86_64_"]
-    for pref in prefs:
-        for link in links:
-            if link.rsplit("/", 1)[-1].startswith(pref):
-                return link
-    return None
-
-
 def install_plink2_binary(project: Project, info: PlatformInfo) -> str:
-    html = httpx.get(PLINK2_PAGE, follow_redirects=True, timeout=60).text
-    links = re.findall(r'href="(https://s3\.amazonaws\.com/plink2-assets/[^"]+\.zip)"', html)
-    url = plink2_asset(info, links)
-    if url is None:
-        raise RuntimeError(f"no PLINK 2 binary for {info.os}/{info.arch} on {PLINK2_PAGE}")
-    archive = project.path(".efgpp", "downloads", url.rsplit("/", 1)[-1])
-    download(url, archive)
-    project.bin_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(archive) as z:
-        for member in z.namelist():
-            if member.rsplit("/", 1)[-1] in ("plink2", "plink2.exe"):
-                target = project.bin_dir / member.rsplit("/", 1)[-1]
-                target.write_bytes(z.read(member))
-                target.chmod(0o755)
-                return url
-    raise RuntimeError(f"{archive.name} contains no plink2 executable")
+    """Official PLINK 2 binary into <project>/.efgpp/bin (kept for callers of the old API)."""
+    return install_plink2(project.path(".efgpp"), info, lambda _m: None).method
 
 
 def _record_tool(project: Project, name: str) -> str | None:
@@ -129,7 +86,7 @@ def _conda_family(project: Project) -> tuple[str, object] | None:
 
 
 def setup_data(project: Project, *, components: set[str] | None = None, dry_run: bool = False,
-               progress: Callable[[str], None] | None = None) -> SetupReport:
+               shared: bool = False, progress: Callable[[str], None] | None = None) -> SetupReport:
     say = progress or (lambda _m: None)
     want = components or {"genetics", "core", "reporting"}
     if project.data.predicted.expression.enabled or "metaxcan" in want:
@@ -175,15 +132,13 @@ def setup_data(project: Project, *, components: set[str] | None = None, dry_run:
         if env in want and manager is not None:
             say(f"creating environment {env}")
             _create_env(project, env, info, report, manager)
-    if "genetics" in want and _record_tool(project, "plink2") is None:
-        try:
-            say("installing PLINK 2 binary")
-            url = install_plink2_binary(project, info)
-            report.add("plink2", "installed", url)
-        except Exception as exc:  # noqa: BLE001
-            report.add("plink2", "failed", str(exc))
-    if "metaxcan" in want and manager is not None:
-        _install_metaxcan(project, report)
+    # Anything still missing: download it from its official source into the project
+    # (or the shared per-user folder), so setup never depends on conda alone.
+    missing = [tool for comp in sorted(want) for tool in COMPONENT_TOOLS.get(comp, [])]
+    for tool, status, detail in install_tools(project, missing, shared=shared, progress=say):
+        if status != "ok":
+            # Only PLINK 2 is essential; other tools are reported and the plan marks their steps blocked.
+            report.add(tool, "warning" if status == "failed" and tool != "plink2" else status, detail)
 
     # 14-16: test executables and save versions
     for tool in ("plink2", "plink", "bcftools", "tabix", "flashpca2", "snakemake", "multiqc",
@@ -200,27 +155,6 @@ def setup_data(project: Project, *, components: set[str] | None = None, dry_run:
 
     report.add("lock file", "ok", str(write_lock(project)))
     return report
-
-
-def _install_metaxcan(project: Project, report: SetupReport) -> None:
-    """Clone MetaXcan into the metaxcan environment and point the predixcan tool at it."""
-    import subprocess
-
-    target = project.envs_dir / "metaxcan" / "MetaXcan"
-    if not target.exists():
-        proc = subprocess.run(["git", "clone", "--depth", "1", "https://github.com/hakyimlab/MetaXcan", str(target)],
-                              capture_output=True, text=True)
-        if proc.returncode != 0:
-            report.add("metaxcan", "failed", proc.stderr[-300:])
-            return
-    script = target / "software" / "Predict.py"
-    if script.exists():
-        project.config.execution.tools = {**project.config.execution.tools,
-                                          "predixcan": project.relative(script)}
-        project.save_project_config()
-        report.add("metaxcan", "installed", project.relative(script))
-    else:
-        report.add("metaxcan", "failed", "Predict.py not found in the MetaXcan checkout")
 
 
 def setup_annotation(project: Project, *, build: str | None = None, progress: Callable[[str], None] | None = None) -> SetupReport:

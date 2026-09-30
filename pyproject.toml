@@ -40,6 +40,8 @@ dependencies = [
     "filelock>=3.13",
     "platformdirs>=4.2",
     "psutil>=5.9",
+    # Fast isolated Python environments for tools installed by `efgpp setup tools`.
+    "uv>=0.4",
 ]
 
 [project.optional-dependencies]
