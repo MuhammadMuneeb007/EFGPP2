@@ -35,7 +35,12 @@ is not installed, decides **when** and **where** (order, parallelism, restarts, 
 
 ## 2. Package stack and responsibilities
 
-### 2.1 Python packages (installed by `uv sync`)
+EFGPP itself is installed into one environment: conda (`conda env create -f environment.yml`,
+then `conda activate efgpp`) or uv (`uv sync`). The external scientific tools in §2.2 live in
+separate per-purpose environments inside each project. EFGPP activates the right one per step,
+so users never switch environments by hand. See README → *Install*.
+
+### 2.1 Python packages (installed by `environment.yml` or `uv sync`)
 
 | Package | Used for | Main EFGPP modules |
 |---|---|---|

@@ -1020,6 +1020,11 @@ standards = [
     { name = "ga4gh-vrs", extra = ["extras"] },
     { name = "phenopackets" },
 ]
+test = [
+    { name = "hypothesis" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -1050,6 +1055,7 @@ requires-dist = [
     { name = "fsspec", specifier = ">=2024.2" },
     { name = "ga4gh-vrs", extras = ["extras"], marker = "extra == 'standards'", specifier = ">=2.0" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "hypothesis", marker = "extra == 'test'", specifier = ">=6.100" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "kaleido", marker = "extra == 'reporting'", specifier = ">=0.2" },
     { name = "mudata", marker = "extra == 'omics'", specifier = ">=0.3" },
@@ -1062,6 +1068,8 @@ requires-dist = [
     { name = "psutil", specifier = ">=5.9" },
     { name = "pyarrow", specifier = ">=15" },
     { name = "pydantic", specifier = ">=2.6" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
+    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=5" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.7" },
     { name = "scipy", specifier = ">=1.11" },
@@ -1070,7 +1078,7 @@ requires-dist = [
     { name = "upsetplot", marker = "extra == 'reporting'", specifier = ">=0.9" },
     { name = "zarr", marker = "extra == 'omics'", specifier = ">=2.16" },
 ]
-provides-extras = ["omics", "reporting", "fast", "standards", "alphagenome", "all"]
+provides-extras = ["omics", "reporting", "fast", "standards", "alphagenome", "test", "all"]
 
 [package.metadata.requires-dev]
 dev = [

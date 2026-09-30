@@ -1,0 +1,17 @@
+# Conda environment for EFGPP itself (the Python application only).
+#
+#   conda env create -f environment.yml
+#   conda activate efgpp
+#   efgpp --version
+#
+# Scientific tools (PLINK 2, VEP, MetaXcan, ...) are NOT installed here: `efgpp setup data`
+# creates a separate small environment per purpose inside each project and EFGPP switches
+# between them automatically.
+name: efgpp
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - -e .[omics,test]

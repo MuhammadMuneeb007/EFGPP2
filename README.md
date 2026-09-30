@@ -18,19 +18,73 @@ trait is hard-coded, and a test enforces that. The one trait-like token is the l
 
 ## Install
 
+EFGPP uses **two kinds of environment**. You only ever activate the first one.
+
+| Environment | Contains | Who manages it |
+|---|---|---|
+| **`efgpp`** (conda or a uv venv) | the EFGPP Python application: Polars, DuckDB, Pandera, Typer… | you: create it once, `conda activate efgpp` per session |
+| **`<project>/.efgpp/envs/{genetics,annotation,metaxcan,reporting}`** | scientific tools: PLINK 2, bcftools, VEP, OpenCRAVAT, MetaXcan, MultiQC | EFGPP: created by `efgpp setup data` and switched automatically per step |
+
+Scientific tools conflict with each other (e.g. VEP needs Perl, MetaXcan its own Python), so
+each group gets its own environment. You never `conda activate` these: when a step runs,
+EFGPP executes the tool inside its environment for that command only.
+
+### Option A — conda (recommended on HPC clusters)
+
+Requires conda, mamba or micromamba (e.g. Miniforge).
+
 ```bash
-uv sync                      # Python ≥ 3.11; creates .venv with efgpp + dev tools
-uv run efgpp --version
+git clone https://github.com/MuhammadMuneeb007/EFGPP2.git
+cd EFGPP2
+conda env create -f environment.yml      # creates the `efgpp` env; installs EFGPP in editable mode
+conda activate efgpp
+efgpp --version                          # -> efgpp 0.1.0
 ```
 
-Optional extras: `efgpp[omics]` (AnnData/Zarr/MuData; otherwise omics are stored as Parquet),
-`efgpp[reporting]` (Kaleido/UpSetPlot), `efgpp[standards]` (Phenopackets validation, GA4GH VRS),
-`efgpp[alphagenome]`.
+Every new shell then only needs `conda activate efgpp`. Editable mode means `git pull` updates
+EFGPP without reinstalling; re-run `pip install -e ".[omics,test]"` only when `pyproject.toml`
+changes. To install into an existing conda environment instead:
+
+```bash
+conda activate <your-env>                # needs Python >= 3.11
+pip install -e "/path/to/EFGPP2[omics,test]"
+```
+
+Remove the environment with `conda env remove -n efgpp`.
+
+### Option B — uv
+
+```bash
+cd EFGPP2
+uv sync                                  # creates EFGPP2/.venv with efgpp + dev tools
+source .venv/bin/activate                # Windows: .venv\Scripts\activate
+efgpp --version
+```
+
+Without activating, prefix commands with `uv run` (this only works inside the EFGPP2
+folder), or install a user-wide command with `uv tool install --editable /path/to/EFGPP2`.
+
+### Extras
+
+`omics` (AnnData/Zarr/MuData; without it omics are stored as Parquet), `test` (pytest,
+hypothesis), `reporting` (Kaleido/UpSetPlot), `standards` (Phenopackets validation, GA4GH VRS),
+`alphagenome`. Example: `pip install -e ".[omics,test,reporting]"`.
+
+### Check the installation
+
+```bash
+efgpp doctor                             # what is installed / missing
+pytest                                   # from the EFGPP2 folder; 56 tests
+```
 
 ## Quick start
 
+Create each project **outside the EFGPP2 repository**. A project accumulates data, registry
+files, logs and reports that must never be committed to the code repository.
+
 ```bash
-mkdir my_project && cd my_project
+conda activate efgpp
+mkdir -p ~/efgpp_projects/my_project && cd ~/efgpp_projects/my_project
 efgpp init .
 efgpp setup data                         # PLINK 2, bcftools, Snakemake, … in .efgpp/envs/<purpose>
 
@@ -97,6 +151,36 @@ modelling PCs belong inside training folds.
 
 Native Windows runs the core and PLINK 2. Bioconda has no Windows builds, so VEP, bcftools and
 MetaXcan need WSL2 or Docker (`efgpp doctor` says so).
+
+## Running on an HPC cluster
+
+- **Run `efgpp setup data` on a login node.** It downloads Pixi and Bioconda packages, and
+  compute nodes often have no internet access.
+- **Keep projects on a shared filesystem** (home or project storage, not node-local `/tmp`), so
+  compute jobs see the same `.efgpp/envs` and registry.
+- **Submit work** either through Snakemake (`efgpp data prepare --executor slurm`, set
+  `execution.hpc.partition` / `account` in `project.yaml`) or as explicit scripts
+  (`efgpp export slurm` → `hpc/*.sbatch` + `hpc/submit_all.sh`). Both call EFGPP through
+  the absolute path of the `efgpp` environment's Python, so jobs need no `conda activate`.
+  Regenerate them (`efgpp data plan` / `efgpp export slurm`) if you recreate or move that
+  environment.
+- **Reuse tools you already have in conda environments** instead of letting EFGPP build new
+  ones. Point to them in `project.yaml`; EFGPP runs those binaries directly:
+
+  ```yaml
+  execution:
+    environment_manager: system          # do not create environments
+    tools:
+      plink2: /home/<user>/miniconda3/envs/genetics/bin/plink2
+      bcftools: /home/<user>/miniconda3/envs/genetics/bin/bcftools
+      vep: /home/<user>/miniconda3/envs/vep/bin/vep
+  ```
+
+  Then check with `efgpp doctor`.
+
+> Automatic environment creation with Pixi/Micromamba on Linux is implemented but has not yet
+> been exercised on a cluster; if `efgpp setup data` fails, the `tools:` override above does not
+> depend on it.
 
 ## Development
 
