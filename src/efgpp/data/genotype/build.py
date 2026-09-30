@@ -108,7 +108,8 @@ def evidence_from_vcf_header(meta_lines: list[str]) -> list[Evidence]:
 
 
 def evidence_from_positions(variants: pl.DataFrame) -> list[Evidence]:
-    """Positions past a chromosome's end rule a build out (weak, but never wrong)."""
+    """Positions past a chromosome's end rule a build out. One chromosome is weak evidence;
+    several chromosomes (and none past the other build's ends) are conclusive."""
     if variants.height == 0:
         return []
     maxpos = (
@@ -125,7 +126,8 @@ def evidence_from_positions(variants: pl.DataFrame) -> list[Evidence]:
     for build in BUILDS:
         other = GenomeBuild.GRCH38 if build == GenomeBuild.GRCH37 else GenomeBuild.GRCH37
         if excluded[build] and not excluded[other]:
-            out.append(Evidence("coordinate_bounds", other, 0.7,
+            weight = 0.9 if len(excluded[build]) >= 2 else 0.7
+            out.append(Evidence("coordinate_bounds", other, weight,
                                 f"positions beyond {build.value} chromosome ends: {excluded[build][:3]}"))
     return out
 

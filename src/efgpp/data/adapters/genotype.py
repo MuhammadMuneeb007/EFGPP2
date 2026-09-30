@@ -143,9 +143,10 @@ class GenotypeAdapter(DataAdapter):
             v = variant_table(fs, None, limit=BUILD_SAMPLE_VARIANTS)
             n = count_variants(fs)
             rep.ok(f"{plural(n, 'variant')}" if n is not None else f"variant file readable ({v.height:,} checked)")
-            bad_pos = int((v.get_column("position").fill_null(0) < 1).sum())
-            if bad_pos:
-                rep.fail(f"{plural(bad_pos, 'variant')} with invalid positions")
+            unplaced = int((v.get_column("position").fill_null(0) < 1).sum())
+            if unplaced:
+                rep.warn(f"{plural(unplaced, 'variant')} with position 0 (unplaced array probes; kept, "
+                         "PLINK treats them as unmapped)", unplaced)
             missing_ids = int(v.get_column("variant_id").is_in([".", ""]).sum())
             dup_ids = int(v.filter(~v.get_column("variant_id").is_in([".", ""])).get_column("variant_id").is_duplicated().sum())
             if missing_ids:

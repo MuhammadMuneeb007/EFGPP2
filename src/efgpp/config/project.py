@@ -57,8 +57,8 @@ class HPCConfig(StrictModel):
 
 
 class ExecutionConfig(StrictModel):
-    # "snakemake" is preferred; "auto" falls back to the built-in executor when
-    # Snakemake is not installed (e.g. native Windows).
+    # auto: built-in executor for local runs; Snakemake for --executor slurm.
+    # "snakemake" forces Snakemake for local runs too.
     engine: Literal["snakemake", "builtin", "auto"] = "auto"
     local_cores: int = Field(8, ge=1)
     # pixi (default) | micromamba | mamba | conda | system (create nothing; use execution.tools/PATH)

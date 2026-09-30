@@ -28,8 +28,9 @@ Paths such as `data/genotype/qc.py` are relative to `src/efgpp/`.
       Availability ─► Report (Plotly + Jinja2 [+ MultiQC]) ─► DataSnapshot (YAML + Parquet)
 ```
 
-EFGPP decides **what** must happen (the plan). Snakemake, or the built-in executor when Snakemake
-is not installed, decides **when** and **where** (order, parallelism, restarts, SLURM).
+EFGPP decides **what** must happen (the plan). Local runs use EFGPP's built-in executor (errors
+printed directly in the terminal); Snakemake is used for the cluster (`--executor slurm`: one
+SLURM job per step, dependencies, retries) or when `execution.engine: snakemake` is set.
 
 ---
 
@@ -260,7 +261,7 @@ versions.
 | Concern | Implementation |
 |---|---|
 | Plan (what can run, what cannot and why) | `data/plan.py`; written to `workflow/plan.json` |
-| Local execution without Snakemake | `workflow/executor.py` (topological order; skips up-to-date steps using input fingerprints in `work/steps/<id>.done`) |
+| Local execution (default) | `workflow/executor.py` built-in executor (topological order; skips up-to-date steps using input fingerprints in `work/steps/<id>.done`) |
 | Snakemake | `workflow/snakemake.py` generates `workflow/Snakefile` + `rules/*.smk`; each rule calls `efgpp data step <id>` |
 | SLURM through Snakemake | `efgpp data prepare --executor slurm` with `workflow/profiles/slurm/config.yaml` |
 | Explicit SLURM scripts | `workflow/slurm.py` → `hpc/*.sbatch` + `submit_all.sh` (with `afterok` dependencies) |
@@ -285,7 +286,7 @@ be refit inside training folds.
 
 | Area | How it was verified |
 |---|---|
-| Registry, validation, standardization, timeline, availability, report, snapshots, migration, CLI | Automated tests (72) on Windows |
+| Registry, validation, standardization, timeline, availability, report, snapshots, migration, CLI | Automated tests (75) on Windows |
 | Genotype QC, kinship, PCA | End-to-end tests with the real PLINK 2 binary |
 | VEP, OpenCRAVAT parsers; ClinVar/AlphaMissense lookups | Tests on small synthetic files; the external tools were not run |
 | PrediXcan | Output handling tested with a mocked run |
@@ -329,10 +330,9 @@ efgpp data add genotype --path $M/migraine --format bed --build auto --mode refe
 efgpp phenotype add --name migraine --path $M/migraine.height \
     --id-column IID --value-column Height --type binary
 
-# 3. Covariates: list every column of migraine.cov except FID and IID (from step 0);
-#    columns holding codes such as sex go in --categorical
-efgpp data add covariates --path $M/migraine.cov --id-column IID \
-    --columns COV1 COV2 COV3 --categorical COV1
+# 3. Covariates: every column except FID/IID is taken automatically
+#    (optional: --columns <names>, --categorical <names> for codes such as sex)
+efgpp data add covariates --path $M/migraine.cov --id-column IID
 
 # 4. Check, prepare, look at the result, freeze
 efgpp data validate
@@ -342,8 +342,7 @@ efgpp data report                      # reports/data/index.html
 efgpp data freeze --name migraine_v1
 ```
 
-Replace `COV1 COV2 COV3` with the real column names printed in step 0 (for example
-`--columns Sex Age PC1 PC2 PC3 PC4 PC5 --categorical Sex`).
+A source added wrongly is removed with `efgpp data remove COV001` and added again.
 
 ### What EFGPP does with these files
 
@@ -358,8 +357,9 @@ Replace `COV1 COV2 COV3` with the real column names printed in step 0 (for examp
 ### Genome build
 
 `--build auto` infers the build from the variant positions (and the reference FASTA once
-`efgpp resources install genome` has run). If the evidence is not conclusive, `efgpp data validate`
-stops with "genome build could not be determined confidently". Then set it explicitly — the
+`efgpp resources install genome` has run). For the migraine data, positions beyond the GRCh38
+ends of chromosomes 1, 2 and 4 identify GRCh37. If the evidence is not conclusive,
+`efgpp data validate` stops with "genome build could not be determined confidently". Then set it explicitly — the
 UK Biobank genotypes of the original EFGPP study are GRCh37 (hg19) — either by re-adding with
 `--build GRCh37` or by editing `data.yaml`:
 

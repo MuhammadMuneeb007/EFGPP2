@@ -44,9 +44,13 @@ def is_current(project: Project, step: Step) -> bool:
 
 
 def choose_engine(project: Project, requested: str | None) -> str:
+    """auto: the built-in executor for local runs (errors shown directly in the terminal);
+    Snakemake only for cluster execution (--executor slurm) or when chosen explicitly."""
     engine = requested or project.config.execution.engine
     if engine == "auto":
-        return "snakemake" if available(project, "snakemake") else "builtin"
+        return "builtin"
+    if engine == "snakemake" and not available(project, "snakemake"):
+        raise RuntimeError("engine snakemake requested but Snakemake is not installed (efgpp setup tools snakemake)")
     return engine
 
 
@@ -109,6 +113,8 @@ def prepare(project: Project, *, kinds: set[str] | None = None, cores: int | Non
             if s.enabled and (force or s.always_run or not is_current(project, s)):
                 marker_path(project, s).unlink(missing_ok=True)
         code = run_snakemake(project, cores=cores, executor=executor, dry_run=dry_run)
+        if code != 0:
+            show_failed_step_logs(project, chosen, console)
         status = "done" if code == 0 else "failed"
         return [StepOutcome("snakemake", status, detail=f"exit code {code}")]
     if dry_run:
@@ -127,3 +133,15 @@ def ensure_simulation(project: Project, console: Console) -> None:
 
         added = run_simulation(project)
         console.print(f"[cyan]>[/] simulate: generated {', '.join(added)}")
+
+
+def show_failed_step_logs(project: Project, steps: list[Step], console: Console) -> None:
+    """Snakemake only says 'check log file(s)'; print the end of each failed step's log."""
+    for s in steps:
+        log = project.root / "logs" / "snakemake" / f"{s.id}.log"
+        if s.enabled and not marker_path(project, s).exists() and log.exists():
+            lines = log.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+            if lines:
+                console.print(f"\n[red]x {s.id}[/] ({project.relative(log)}):")
+                for line in lines[-6:]:
+                    console.print(f"  {line}")

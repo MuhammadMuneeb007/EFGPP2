@@ -64,15 +64,31 @@ def add_covariates(
     ctx: typer.Context,
     path: str = typer.Option(..., "--path"),
     id_column: str = typer.Option("participant_id", "--id-column"),
-    columns: str = typer.Option(..., "--columns", help="covariate columns (space or comma separated)"),
+    columns: str | None = typer.Option(None, "--columns",
+                                       help="covariate columns (space or comma separated); default: all except IDs"),
     categorical: str = typer.Option("", "--categorical", help="comma-separated categorical columns"),
     event_column: str | None = typer.Option(None, "--event-column"),
     mode: StorageMode = typer.Option(StorageMode.AUTO, "--mode"),
     source_id: str | None = typer.Option(None, "--id"),
 ) -> None:
-    """Add a covariate table. Example: --columns age sex bmi"""
+    """Add a covariate table. Default: every column except the ID columns. Example: --columns age sex bmi"""
     project = load_project()
-    variables = [c for part in [columns, *ctx.args] for c in part.replace(",", " ").split()]
+    variables = [c for part in [columns or "", *ctx.args] for c in part.replace(",", " ").split()]
+    if not variables:
+        from efgpp.data.io import table_columns
+
+        header = table_columns(project.resolve(user_path(project, path)))
+        variables = [c for c in header if c not in {id_column, "FID", "IID", "#FID", "#IID"}]
+        console.print(f"[dim]covariates: {', '.join(variables)}[/]")
+    missing = []
+    if columns is not None or ctx.args:
+        from efgpp.data.io import table_columns
+
+        header = table_columns(project.resolve(user_path(project, path)))
+        missing = [v for v in variables if v not in header]
+    if missing:
+        console.print(f"[red]columns not in the file: {', '.join(missing)}[/]; available: {', '.join(header)}")
+        raise typer.Exit(2)
     sid = source_id or project.data.next_id("COV")
     project.data.observed.covariates.append(CovSource(
         id=sid, path=user_path(project, path), participant_id_column=id_column, variables=variables,
@@ -148,6 +164,23 @@ def add_clinical(
         timeline=_timeline(event_column, time_column), mode=mode))
     project.save_data_config()
     _register(project, sid)
+
+
+@app.command()
+def remove(source_id: str = typer.Argument(..., help="source id, e.g. COV001")) -> None:
+    """Remove a source from data.yaml (registered artifacts are kept for provenance)."""
+    project = load_project()
+    try:
+        modality, _ = project.data.get_source(source_id)
+    except KeyError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2) from exc
+    obs = project.data.observed
+    for name in type(obs).model_fields:
+        items = getattr(obs, name)
+        setattr(obs, name, [s for s in items if s.id != source_id])
+    project.save_data_config()
+    console.print(f"[green]✓[/] removed {source_id} ({modality.value}) from data.yaml")
 
 
 @app.command()

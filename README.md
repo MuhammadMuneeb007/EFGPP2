@@ -122,7 +122,7 @@ hand into `<install root>/opt/DBSLMM/software/dbslmm`.
 
 ```bash
 efgpp doctor                             # what is installed / missing
-pytest                                   # from the EFGPP2 folder; 72 tests
+pytest                                   # from the EFGPP2 folder; 75 tests
 ```
 
 ### If a tool cannot be installed with mamba/conda
@@ -233,7 +233,7 @@ modelling PCs belong inside training folds.
 | ClinVar, gnomAD, dbSNP, AlphaMissense | DuckDB lookups against the official files | tested on small synthetic files |
 | AlphaGenome | atlas table lookup; optional API mode | API mode is written against the published client and untested |
 | PrediXcan | MetaXcan `Predict.py` + PredictDB models | output handling tested with a mocked run |
-| Workflow | Snakemake (generated `workflow/Snakefile`); built-in executor when Snakemake is absent | built-in executor tested; Snakefile/SLURM generation tested, not executed |
+| Workflow | built-in executor for local runs; Snakemake (generated `workflow/Snakefile`) for `--executor slurm` | built-in executor tested; Snakefile/SLURM generation tested, not executed |
 
 Native Windows runs the core and PLINK 2. Bioconda has no Windows builds, so VEP, bcftools and
 MetaXcan need WSL2 or Docker (`efgpp doctor` says so).
