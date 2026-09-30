@@ -1,7 +1,7 @@
 """The data plan: which steps exist, which can run now, and why others cannot.
 
 Steps are pure descriptions. `run_step` executes one of them and is what both the
-built-in executor and every Snakemake rule call (`efgpp data step <id>`).
+built-in executor and the SLURM scripts call (`efgpp data step <id>`).
 """
 
 from __future__ import annotations

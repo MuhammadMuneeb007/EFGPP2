@@ -69,7 +69,7 @@ def test_each_conda_tool_gets_its_own_environment() -> None:
     envs = {tool: spec[0] for tool, spec in installers.CONDA_TOOLS.items()}
     assert envs["vep"] == "vep" and "ensembl-vep" in installers.CONDA_TOOLS["vep"][1]
     assert envs["bcftools"] == envs["tabix"] == envs["bgzip"] == "bcftools"
-    assert len({envs[t] for t in ("plink2", "plink", "bcftools", "snakemake", "multiqc", "oc", "vep", "predixcan")}) == 8
+    assert len({envs[t] for t in ("plink2", "plink", "bcftools", "gwaslab", "multiqc", "oc", "vep", "predixcan")}) == 8
     assert "efgpp" not in envs.values()
 
 
@@ -109,5 +109,5 @@ def test_already_available_tools_are_skipped(project: Project, monkeypatch: pyte
     import efgpp.setup.tools as tools_mod
 
     monkeypatch.setattr(tools_mod, "available", lambda _p, _t: True)
-    rows = installers.install_tools(project, ["plink2", "snakemake"])
-    assert rows == [("plink2", "ok", "already available"), ("snakemake", "ok", "already available")]
+    rows = installers.install_tools(project, ["plink2", "gwaslab"])
+    assert rows == [("plink2", "ok", "already available"), ("gwaslab", "ok", "already available")]

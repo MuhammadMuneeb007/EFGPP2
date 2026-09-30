@@ -27,7 +27,7 @@ EFGPP uses **two kinds of environment**. You only ever activate the first one.
 | Environment | Contains | Who manages it |
 |---|---|---|
 | **`efgpp`** (conda or a uv venv) | the EFGPP Python application: Polars, DuckDB, Pandera, Typer… | you: create it once, `conda activate efgpp` per session |
-| **`<project>/software/envs/<tool>`** — one per tool | scientific tools: PLINK 2, bcftools, VEP (+ Perl), OpenCRAVAT, MetaXcan, MultiQC, Snakemake, R, PRS tools | EFGPP: created by `efgpp setup data` and switched automatically per step |
+| **`<project>/software/envs/<tool>`** — one per tool | scientific tools: PLINK 2, bcftools, VEP (+ Perl), OpenCRAVAT, MetaXcan, MultiQC, GWASLab, R, PRS tools | EFGPP: created by `efgpp setup data` and switched automatically per step |
 
 Scientific tools conflict with each other (e.g. VEP needs Perl, MetaXcan its own Python), so
 each group gets its own environment. You never `conda activate` these: when a step runs,
@@ -126,7 +126,7 @@ hand into `<install root>/opt/DBSLMM/software/dbslmm`.
 
 ```bash
 efgpp doctor                             # what is installed / missing
-pytest                                   # from the EFGPP2 folder; 80 tests
+pytest                                   # from the EFGPP2 folder; 87 tests
 ```
 
 ### If a tool cannot be installed with mamba/conda
@@ -138,7 +138,7 @@ project, so a missing Bioconda package never blocks you. You can also do this di
 ```bash
 cd ~/efgpp_projects/my_project
 efgpp setup tools                        # every missing tool
-efgpp setup tools plink2 snakemake multiqc   # only these
+efgpp setup tools plink2 gwaslab multiqc     # only these
 efgpp setup tools --force plink2         # reinstall
 ```
 
@@ -148,7 +148,7 @@ efgpp setup tools --force plink2         # reinstall
 | `plink` (1.9) | official binary from cog-genomics.org | internet |
 | `flashpca2` | official static binary (GitHub release v2.0, x86_64) | internet |
 | `bcftools`, `tabix`, `bgzip` | built from the official htslib + bcftools release tarballs | `gcc`/`cc`, `make`, zlib headers (e.g. `module load gcc`) |
-| `snakemake` (+ SLURM plugin), `multiqc`, `oc` (OpenCRAVAT) | isolated Python environments created with uv from PyPI | internet |
+| `multiqc`, `oc` (OpenCRAVAT), `gwaslab` | own conda environment each (fallback: uv environment from PyPI) | internet |
 | `predixcan` (MetaXcan) | MetaXcan source from GitHub + its own Python 3.11 environment (uv downloads Python if needed) | internet |
 | `vep` | official `ensemblorg/ensembl-vep` image with `vep` / `vep_install` wrapper scripts | Apptainer/Singularity (or Docker) |
 
@@ -161,7 +161,7 @@ sources and downloads in `software/opt/`, logs in `software/logs/`; reference da
 
 ```bash
 eval "$(efgpp setup path)"               # puts ./software/bin on PATH
-plink2 --version && snakemake --version && multiqc --version
+plink2 --version && multiqc --version
 ```
 
 Tools you already have (e.g. `plink`, `bcftools` in your `efgpp` mamba env) are detected and
@@ -176,7 +176,7 @@ files, logs and reports that must never be committed to the code repository.
 conda activate efgpp
 mkdir -p ~/efgpp_projects/my_project && cd ~/efgpp_projects/my_project
 efgpp init .
-efgpp setup data                         # PLINK 2, bcftools, Snakemake, … in software/envs/<tool>
+efgpp setup data                         # PLINK 2, bcftools, MultiQC, GWASLab, … in software/envs/<tool>
 
 efgpp data add genotype --path /data/genotype/cohort --format pgen --build auto --mode reference
 efgpp phenotype add --name trait_a --path phenotypes.csv --id-column IID --value-column TRAIT_A --type binary
@@ -205,6 +205,22 @@ sel = snap.select("trait_a", require=["genotype_qc"], include=["expression", "co
 sel.participants            # participant IDs with trait_a AND QC-passed genotype
 sel.artifacts["genotype_qc"]  # exact registered artifacts (path, checksum, lineage, versions)
 ```
+
+## Data modules (one editable file per kind of data)
+
+How EFGPP reads each kind of data lives in its own small file under `src/efgpp/modules/`:
+
+| File | Decides |
+|---|---|
+| `columns.py` | participant ID column names (IID, participant_id, eid, …), missing-value tokens |
+| `genotype.py` | genotype format and sample IDs (IID or FID_IID) |
+| `phenotype.py` | which columns are phenotypes; binary / continuous / multiclass; case/control coding |
+| `covariates.py` | covariate roles (sex, age, PCs, batch) from names and values; categorical vs numeric |
+| `gwas.py` | which GWAS column is CHR, BP, A1, A2, BETA/OR, SE, P, N, … (for GWASLab) |
+
+`efgpp modules export covariates` copies a module into `<project>/modules/`; edit that copy and
+EFGPP uses it for this project (`efgpp modules list` shows which file is active). Column names
+are never changed: standardized tables keep the original names for feature engineering.
 
 ## Concepts
 
@@ -237,7 +253,7 @@ modelling PCs belong inside training folds.
 | ClinVar, gnomAD, dbSNP, AlphaMissense | DuckDB lookups against the official files | tested on small synthetic files |
 | AlphaGenome | atlas table lookup; optional API mode | API mode is written against the published client and untested |
 | PrediXcan | MetaXcan `Predict.py` + PredictDB models | output handling tested with a mocked run |
-| Workflow | built-in executor for local runs; Snakemake (generated `workflow/Snakefile`) for `--executor slurm` | built-in executor tested; Snakefile/SLURM generation tested, not executed |
+| Workflow | EFGPP's built-in executor; `efgpp export slurm` writes sbatch scripts for clusters | built-in executor tested; SLURM script generation tested, not executed |
 
 Native Windows runs the core and PLINK 2. Bioconda has no Windows builds, so VEP, bcftools and
 MetaXcan need WSL2 or Docker (`efgpp doctor` says so).
@@ -248,12 +264,10 @@ MetaXcan need WSL2 or Docker (`efgpp doctor` says so).
   binaries and images, and compute nodes often have no internet access.
 - **Keep projects on a shared filesystem** (home or project storage, not node-local `/tmp`), so
   compute jobs see the same `software/envs` and registry.
-- **Submit work** either through Snakemake (`efgpp data prepare --executor slurm`, set
-  `execution.hpc.partition` / `account` in `project.yaml`) or as explicit scripts
-  (`efgpp export slurm` → `hpc/*.sbatch` + `hpc/submit_all.sh`). Both call EFGPP through
-  the absolute path of the `efgpp` environment's Python, so jobs need no `conda activate`.
-  Regenerate them (`efgpp data plan` / `efgpp export slurm`) if you recreate or move that
-  environment.
+- **Submit work** with explicit SLURM scripts: `efgpp export slurm` writes `hpc/*.sbatch` and
+  `hpc/submit_all.sh` (set `execution.hpc.partition` / `account` in `project.yaml`). They call
+  EFGPP through the absolute path of the `efgpp` environment's Python, so jobs need no
+  `conda activate`; regenerate them if you recreate or move that environment.
 - **Reuse tools you already have in conda environments** instead of letting EFGPP build new
   ones. Point to them in `project.yaml`; EFGPP runs those binaries directly:
 

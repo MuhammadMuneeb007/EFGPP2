@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from efgpp.config.models import StrictModel
 from efgpp.constants import StorageMode
@@ -62,9 +62,14 @@ class HPCConfig(StrictModel):
 
 
 class ExecutionConfig(StrictModel):
-    # auto: built-in executor for local runs; Snakemake for --executor slurm.
-    # "snakemake" forces Snakemake for local runs too.
-    engine: Literal["snakemake", "builtin", "auto"] = "auto"
+    @field_validator("engine", mode="before")
+    @classmethod
+    def _no_snakemake(cls, v: object) -> object:
+        return "builtin" if v == "snakemake" else v
+
+    # Plans run with EFGPP's built-in executor (Snakemake has been removed; old project.yaml
+    # files with `engine: snakemake` are read as builtin). SLURM: `efgpp export slurm`.
+    engine: Literal["builtin", "auto"] = "auto"
     local_cores: int = Field(8, ge=1)
     # pixi (default) | micromamba | mamba | conda | system (create nothing; use execution.tools/PATH)
     environment_manager: Literal["pixi", "micromamba", "mamba", "conda", "system"] = "pixi"

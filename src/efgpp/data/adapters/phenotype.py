@@ -285,6 +285,16 @@ class PhenotypeAdapter(TabularAdapter):
 
         pdir = self.project.phenotype_dir(s.id)
         out = write_parquet(obs, pdir / "observations.parquet", self.project.config.storage.compression)
+        # The phenotype as in the source file: original column name and values (for feature engineering).
+        cols = {"participant_id": pids, s.value_column: pl.Series(
+            [None if m else v for v, m in zip(values.to_list(), missing.to_list(), strict=True)], dtype=pl.Utf8)}
+        if ev:
+            cols[ev] = as_text(df, ev)
+        original = pl.DataFrame(cols).filter(pl.col("participant_id").is_not_null()).unique(
+            ["participant_id", *([ev] if ev else [])], keep="first", maintain_order=True)
+        if coded.numeric.is_not_null().any() and s.type == PhenotypeType.CONTINUOUS:
+            original = original.with_columns(pl.col(s.value_column).cast(pl.Float64, strict=False))
+        write_parquet(original, pdir / "phenotype.parquet", self.project.config.storage.compression)
         levels = coded.notes[0].removeprefix("levels: ") if s.type in (PhenotypeType.MULTICLASS, PhenotypeType.ORDINAL) else None
         definition = {
             "phenotype_id": s.id, "name": s.name, "type": s.type.value,

@@ -13,7 +13,7 @@ Paths such as `data/genotype/qc.py` are relative to `src/efgpp/`.
                     project.yaml   data.yaml   resources.yaml          (Pydantic)
                            │           │             │
                            ▼           ▼             ▼
-  efgpp CLI (Typer + Rich) ──► DataManager / plan ──► executor ──► Snakemake | built-in
+  efgpp CLI (Typer + Rich) ──► DataManager / plan ──► built-in executor (SLURM: export)
                                       │                                  │
              ┌────────────────────────┼──────────────────────────────────┤
              ▼                        ▼                                  ▼
@@ -29,8 +29,8 @@ Paths such as `data/genotype/qc.py` are relative to `src/efgpp/`.
 ```
 
 EFGPP decides **what** must happen (the plan). Local runs use EFGPP's built-in executor (errors
-printed directly in the terminal); Snakemake is used for the cluster (`--executor slurm`: one
-SLURM job per step, dependencies, retries) or when `execution.engine: snakemake` is set.
+printed directly in the terminal). For clusters, `efgpp export slurm` writes explicit sbatch
+scripts (one per step group, with `afterok` dependencies). Snakemake is not used.
 
 ---
 
@@ -91,7 +91,7 @@ called automatically by `efgpp setup data`) downloads it from its official sourc
 | PLINK 2, PLINK 1.9 | official binary (zip) → `bin/` | cog-genomics.org download pages (build chosen by OS/CPU/AVX2) |
 | FlashPCA2 | official static binary → `bin/flashpca` | github.com/gabraham/flashpca release v2.0 |
 | bcftools, tabix, bgzip | source build (`./configure && make && make install`, zlib only) → `opt/samtools`, linked in `bin/` | github.com/samtools htslib + bcftools latest releases |
-| Snakemake (+ SLURM plugin), MultiQC, OpenCRAVAT | uv (fallback venv + pip) Python environment → `envs/<name>`, linked in `bin/` | PyPI |
+| MultiQC, OpenCRAVAT, GWASLab | own conda environment; fallback uv environment → `envs/<name>`, linked in `bin/` | Bioconda / PyPI |
 | MetaXcan / PrediXcan | GitHub source archive → `opt/MetaXcan` + Python 3.11 environment (`envs/metaxcan`); `bin/predixcan` wrapper | github.com/hakyimlab/MetaXcan |
 | Ensembl VEP | container image → `containers/ensembl-vep.sif`; `bin/vep`, `bin/vep_install` wrappers | `ensemblorg/ensembl-vep` via Apptainer/Singularity or Docker |
 
@@ -105,7 +105,7 @@ called automatically by `efgpp setup data`) downloads it from its official sourc
 | **Ensembl VEP** | `annotation` | Molecular consequences (offline cache) | `data/annotation/vep.py` |
 | **OpenCRAVAT** (`oc`) | `annotation` | Modular annotation aggregation | `data/annotation/opencravat.py` |
 | **MetaXcan / PrediXcan** (`Predict.py`) | `metaxcan` | Genetically predicted expression from PredictDB models | `data/predicted/metaxcan.py` |
-| **Snakemake** (+ `snakemake-executor-plugin-slurm`) | `core` | Scheduling, parallelism, restarts, SLURM execution | `workflow/snakemake.py` |
+| **Data modules** (`src/efgpp/modules/*.py`) | EFGPP env | Column inference per kind of data (IDs, phenotypes and their type, covariate roles and categorical columns, GWAS columns); editable per project | `efgpp modules export` |
 | **MultiQC** | `reporting` | Aggregates QC tables (`*_mqc.tsv`) next to the EFGPP report | `reporting/data_report.py` |
 | **GWASLab** (`gwaslab-python`) | `gwaslab` | GWAS summary statistics: load, `basic_check`, `infer_build`, `liftover` to GRCh38 | `data/gwas.py` → `data/gwas_gwaslab_job.py` |
 | **Pixi** / **mamba** / micromamba / conda | system | Creating the per-purpose environments from conda-forge + Bioconda | `setup/pixi.py`, `setup/micromamba.py` |
@@ -266,8 +266,8 @@ versions.
 |---|---|
 | Plan (what can run, what cannot and why) | `data/plan.py`; written to `workflow/plan.json` |
 | Local execution (default) | `workflow/executor.py` built-in executor (topological order; skips up-to-date steps using input fingerprints in `work/steps/<id>.done`) |
-| Snakemake | `workflow/snakemake.py` generates `workflow/Snakefile` + `rules/*.smk`; each rule calls `efgpp data step <id>` |
-| SLURM through Snakemake | `efgpp data prepare --executor slurm` with `workflow/profiles/slurm/config.yaml` |
+| SLURM scripts | `workflow/slurm.py` → `hpc/*.sbatch` + `submit_all.sh`, each step runs `efgpp data step <id>` |
+| Engine | built-in only (`execution.engine: auto`/`builtin`; Snakemake removed) |
 | Explicit SLURM scripts | `workflow/slurm.py` → `hpc/*.sbatch` + `submit_all.sh` (with `afterok` dependencies) |
 | Setup | `setup/manager.py`: platform detection → Pixi (fallback mamba → micromamba → conda) → environments → PLINK 2 binary where Bioconda is unavailable → tool tests → lock file |
 | Doctor | `setup/doctor.py` |
@@ -290,13 +290,13 @@ be refit inside training folds.
 
 | Area | How it was verified |
 |---|---|
-| Registry, validation, standardization, timeline, availability, report, snapshots, migration, CLI | Automated tests (80) on Windows |
+| Registry, validation, standardization, timeline, availability, report, snapshots, migration, CLI | Automated tests (87) on Windows |
 | Genotype QC, kinship, PCA | End-to-end tests with the real PLINK 2 binary |
 | Build check + liftover | Real Ensembl/UCSC check: GRCh37-derived alleles → GRCh37 (100% vs 51%, pyliftover-lifted 100%), GRCh38 → GRCh38; harmonize step tested end to end with PLINK 2 and pyliftover |
 | GWASLab step | Job wiring tested with a mocked GWASLab run; GWASLab environment solved for linux-64; not yet run on Linux |
 | VEP, OpenCRAVAT parsers; ClinVar/AlphaMissense lookups | Tests on small synthetic files; the external tools were not run |
 | PrediXcan | Output handling tested with a mocked run |
-| Snakefile and SLURM generation | Tested; not executed |
+| SLURM script generation | Tested; not executed |
 | Toolkits (`efgpp setup toolkit`) | Catalogue, R install/check script, repository wrappers unit-tested; all six conda environments solved for linux-64; not yet installed on Linux |
 | Direct installers (`efgpp setup tools`) | Build selection unit-tested; binary and Python-environment installs run on Windows; Linux source build, Apptainer VEP and MetaXcan environment not yet run |
 | ROH, ancestry, AlphaGenome API, Pixi environments on Linux/macOS | Implemented, not yet exercised |
@@ -439,3 +439,46 @@ liftover, detected build, GWASLab version) to `resources/gwas/<id>/` and `qc/gwa
 is a REFERENCE artifact (`gwas_sumstats`) in GRCh38; choosing variants or thresholds for a
 target phenotype remains a Representation-layer decision. `efgpp data migrate` adds legacy GWAS
 files as GWAS sources automatically.
+
+---
+
+## 13. Data modules and automatic column inference
+
+Each kind of data has one readable file in `src/efgpp/modules/`; `efgpp modules export <name>`
+copies it to `<project>/modules/<name>.py`, and that copy is used for the project.
+
+| Command | Inferred (module) | Stored in data.yaml |
+|---|---|---|
+| `efgpp data add genotype --path <prefix>` | format (pgen/bed/bgen/vcf/bcf), sample IDs IID vs FID_IID (`genotype.py`) | `format`, `sample_id.mode`; build auto → detected and lifted to GRCh38 |
+| `efgpp phenotype add --path <file>` | ID column; every phenotype column (ID, FID and covariate-looking columns skipped); type binary / continuous / multiclass; binary coding (PLINK 1/2 → 2 = case, 0/1, case/control words); name = file name for one-column files (`phenotype.py`) | one `PHxxx` per phenotype column with `value_column` = original name, `type`, `case_values`/`control_values` or `levels` |
+| `efgpp data add covariates --path <file>` | ID column; variables = all other columns except FID; role (sex, age, pc, batch, other) from name and values; categorical = text, sex, batch, or ≤10 integer codes (`covariates.py`) | `variables`, `categorical`, `roles` |
+| `efgpp data add gwas --path <file>` | GWASLab keyword per column (CHR/chrom, BP/pos, SNP/snpid, A1/ea, A2/nea, BETA, OR, SE, P, N, INFO, EAF, …) and whether the essentials are present (`gwas.py`) | `columns` |
+
+Every explicit option (`--id-column`, `--value-column`, `--type`, `--columns`, `--categorical`,
+`--col keyword=column`) overrides the inference.
+
+**Original column names are kept** for feature engineering:
+
+| Output | Columns |
+|---|---|
+| `phenotypes/<id>/phenotype.parquet` | `participant_id` + the phenotype column with its original name and values |
+| `phenotypes/<id>/observations.parquet` | EFGPP's coded form (value_numeric 0/1, value_text) used internally |
+| `data/observed/covariates/<id>/covariates.parquet` | `participant_id` + every covariate with its original name |
+| `resources/gwas/<id>/<id>.GRCh38.parquet` | the original GWAS column names (values checked and lifted by GWASLab) |
+| `resources/gwas/<id>/<id>.GRCh38.gwaslab.parquet` | GWASLab standard names (CHR, POS, EA, NEA, …, STATUS) |
+
+### GWAS with study details
+
+```bash
+efgpp data add gwas --path <file> --trait <GWAS trait> [--phenotype <project phenotype> ...] \
+    [--ancestry European] [--n-cases N] [--n-controls N] [--n N] [--study <name/accession>] \
+    [--build auto] [--col keyword=column] [--no-run]
+efgpp data gwas list [--phenotype <name>]        # which GWAS exist for a phenotype
+efgpp data gwas run <GWAS id> [--force]          # (re)process with GWASLab
+```
+
+`--phenotype` links a GWAS to the project phenotype(s) it is meant for; a GWAS of one trait can
+serve another phenotype (list it with several `--phenotype`). By default the GWAS runs through
+GWASLab immediately (needs `efgpp setup tools gwaslab`); unchanged files are not reprocessed.
+Case/control counts given as numbers become `N_CASE`/`N_CONTROL` columns; ancestry, counts,
+study and target phenotypes are recorded with the artifact and in the data report.

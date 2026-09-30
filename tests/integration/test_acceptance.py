@@ -191,7 +191,6 @@ def test_I_local_execution_end_to_end(with_plink2: Project, cohort_dir: Path) ->
 
 def test_J_slurm_plan_generation(project: Project, cohort_dir: Path) -> None:
     from efgpp.workflow.slurm import export_slurm
-    from efgpp.workflow.snakemake import write_snakefile
 
     p = add_phenotypes(add_genotype(project, cohort_dir), cohort_dir, ["trait_a"])
     p.config.execution.tools = {"plink2": str(Path(__file__))}  # pretend plink2 exists: planning only
@@ -204,8 +203,5 @@ def test_J_slurm_plan_generation(project: Project, cohort_dir: Path) -> None:
     assert "#SBATCH --partition=compute" in gq and "data step genotype_qc.GENO001" in gq
     submit = files["submit_all.sh"].read_text()
     assert "--dependency=afterok:${JOB_PREPARE}" in submit and "--dependency=afterok:" in submit.split("JOB_PCA=")[1]
-    snakefile = write_snakefile(p, build_plan(p))
-    rules = (p.path("workflow", "rules", "genotype_qc.smk")).read_text()
-    assert "rule genotype_qc_GENO001" in rules and "mem_mb=16000" in rules
-    assert 'ancient("work/steps/validate.done")' in p.path("workflow", "rules", "validate.smk").read_text()
-    assert "include: \"rules/pca.smk\"" in snakefile.read_text()
+    assert "data step harmonize.GENO001" in gq  # liftover to GRCh38 runs before QC on the cluster too
+    assert not p.path("workflow", "Snakefile").exists()  # Snakemake is not used

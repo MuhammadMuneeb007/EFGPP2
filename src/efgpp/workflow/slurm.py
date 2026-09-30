@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import os
+import shlex
 import stat
+import sys
 from collections import defaultdict
 from pathlib import Path
 
 from efgpp.data.plan import Step, build_plan
 from efgpp.project import Project
-from efgpp.workflow.snakemake import step_command
+
+
+def step_command(project: Project, step: Step, threads: str = "1") -> str:
+    """Shell command that runs one plan step with the Python of the efgpp environment."""
+    python = Path(sys.executable).as_posix()
+    return (f'"{python}" -m efgpp --project "{project.root.as_posix()}" data step {shlex.quote(step.id)} '
+            f"--threads {threads} --marker {step.marker}")
 
 GROUP_ORDER = ["prepare", "genotype_qc", "pca", "relatedness", "annotation", "expression_prediction", "report"]
 

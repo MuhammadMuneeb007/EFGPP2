@@ -30,8 +30,8 @@ def _print(report) -> None:  # type: ignore[no-untyped-def]
 
 @app.command("data")
 def data(dry_run: bool = typer.Option(False, "--dry-run"),
-         components: str = typer.Option("core,genetics,reporting", "--components",
-                                        help="comma-separated: core,genetics,annotation,metaxcan,reporting"),
+         components: str = typer.Option("genetics,reporting,gwas", "--components",
+                                        help="comma-separated: genetics,annotation,metaxcan,reporting,gwas"),
          shared: bool = typer.Option(False, "--shared", help="install into $EFGPP_TOOLS_HOME instead of ./software")) -> None:
     """Detect platform, build tool environments (Pixi/mamba), download anything still missing; lock."""
     from efgpp.setup.manager import setup_data
@@ -47,7 +47,7 @@ def tools(names: list[str] = typer.Argument(None, help="tools to install (defaul
           shared: bool = typer.Option(False, "--shared", help="install into $EFGPP_TOOLS_HOME instead of ./software"),
           force: bool = typer.Option(False, "--force", help="reinstall even if the tool is already available")) -> None:
     """Download tools from their official sources: plink2 plink flashpca2 bcftools tabix bgzip
-    snakemake multiqc oc predixcan vep."""
+    multiqc oc predixcan vep gwaslab."""
     from efgpp.setup.installers import INSTALLERS, install_root, install_tools
 
     project = _optional_project()  # outside a project, tools go to ./software

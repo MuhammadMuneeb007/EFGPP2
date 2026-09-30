@@ -93,6 +93,8 @@ class CovariateSource(SourceBase):
     participant_id_column: str = "participant_id"
     variables: list[str] = Field(min_length=1)
     categorical: list[str] = []
+    # column -> role inferred by modules/covariates.py (sex, age, pc, batch, other)
+    roles: dict[str, str] = {}
     missing_values: list[str] = list(DEFAULT_MISSING_TOKENS)
     timeline: TimelineSpec | None = None
 
@@ -144,7 +146,14 @@ class GwasSource(StrictModel):
 
     id: str = Field(pattern=ID_PATTERN)
     path: str
-    trait: str  # free text describing the GWAS trait; never interpreted by the code
+    trait: str  # free text: the trait this GWAS studied; never interpreted by the code
+    # Project phenotypes (names or ids) this GWAS is meant for; may differ from `trait` (a GWAS of a
+    # related trait used for another phenotype). Defaults to the phenotype named like `trait`.
+    phenotypes: list[str] = []
+    ancestry: str | None = None  # free text, e.g. European, EUR, East Asian, multi-ancestry
+    n_cases: int | None = None
+    n_controls: int | None = None
+    study: str | None = None  # e.g. consortium / publication / GWAS Catalog accession
     build: str = "auto"  # GRCh37 | GRCh38 | auto (GWASLab infer_build)
     fmt: str = "auto"  # GWASLab format name (e.g. ssf, gwascatalog, plink2, regenie) or auto
     # GWASLab keyword -> column name, e.g. {"snpid": "SNP", "chrom": "CHR", "pos": "BP", "ea": "A1",

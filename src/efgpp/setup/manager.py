@@ -88,7 +88,7 @@ def _conda_family(project: Project) -> tuple[str, object] | None:
 def setup_data(project: Project, *, components: set[str] | None = None, dry_run: bool = False,
                shared: bool = False, progress: Callable[[str], None] | None = None) -> SetupReport:
     say = progress or (lambda _m: None)
-    want = components or {"genetics", "core", "reporting"}
+    want = components or {"genetics", "reporting", "gwas"}
     if project.data.predicted.expression.enabled or "metaxcan" in want:
         want.add("metaxcan")
     info = detect()
@@ -128,7 +128,7 @@ def setup_data(project: Project, *, components: set[str] | None = None, dry_run:
                                          "use WSL2 or Docker for VEP, bcftools and MetaXcan")
 
     # 6-13: environments and tools
-    for env in ("core", "genetics", "annotation", "metaxcan", "reporting"):
+    for env in ("genetics", "annotation", "metaxcan", "reporting"):
         if env in want and manager is not None:
             say(f"creating environment {env}")
             _create_env(project, env, info, report, manager)
@@ -141,7 +141,7 @@ def setup_data(project: Project, *, components: set[str] | None = None, dry_run:
             report.add(tool, "warning" if status == "failed" and tool != "plink2" else status, detail)
 
     # 14-16: test executables and save versions
-    for tool in ("plink2", "plink", "bcftools", "tabix", "flashpca2", "snakemake", "multiqc",
+    for tool in ("plink2", "plink", "bcftools", "tabix", "flashpca2", "multiqc", "gwaslab",
                  *(("vep", "oc") if "annotation" in want else ()), *(("predixcan",) if "metaxcan" in want else ())):
         version = _record_tool(project, tool)
         if version:

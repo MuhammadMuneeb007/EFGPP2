@@ -22,6 +22,41 @@ app.add_typer(setup.app, name="setup")
 app.add_typer(resources.app, name="resources")
 export_app = typer.Typer(help="Export execution artefacts.", no_args_is_help=True)
 app.add_typer(export_app, name="export")
+modules_app = typer.Typer(help="Data modules (one editable file per kind of data).", no_args_is_help=True)
+app.add_typer(modules_app, name="modules")
+
+
+@modules_app.command("list")
+def modules_list() -> None:
+    """Which module file is active for each kind of data (built-in or the project's copy)."""
+    from efgpp.cli.common import table
+    from efgpp.modules import MODULES, PACKAGE_DIR, project_module_path
+    from efgpp.project import Project, ProjectNotFoundError
+
+    try:
+        project: Project | None = Project.load(state.project_root)
+    except ProjectNotFoundError:
+        project = None
+    rows = []
+    for name in MODULES:
+        override = project_module_path(project, name)
+        rows.append([name, "project" if override else "built-in", str(override or PACKAGE_DIR / f"{name}.py")])
+    console.print(table("Data modules", ["module", "active", "file"], rows))
+
+
+@modules_app.command("export")
+def modules_export(names: list[str] = typer.Argument(None, help="columns genotype phenotype covariates gwas (default: all)"),
+                   force: bool = typer.Option(False, "--force", help="overwrite an existing project copy")) -> None:
+    """Copy module files into <project>/modules/ to edit them; EFGPP then uses your copy."""
+    from efgpp.modules import export
+
+    project = load_project()
+    try:
+        for path in export(project, list(names or []), force=force):
+            console.print(f"[green]✓[/] {project.relative(path)}")
+    except (FileExistsError, KeyError) as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1) from exc
 
 
 def _version(value: bool) -> None:

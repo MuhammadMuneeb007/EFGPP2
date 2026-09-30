@@ -6,7 +6,7 @@ For each run EFGPP writes
     logs/RUN000123.yaml    the run record
 and a row in the registry's tool_runs table.
 
-The registry lock is *not* held while a tool runs, so parallel Snakemake jobs do not
+The registry lock is *not* held while a tool runs, so parallel SLURM jobs do not
 serialise on it.
 """
 

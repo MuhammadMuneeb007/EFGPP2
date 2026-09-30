@@ -16,10 +16,44 @@ from efgpp.config.data import (
 )
 from efgpp.config.data import CovariateSource as CovSource
 from efgpp.constants import Modality, Origin, StorageMode
+from efgpp.project import Project
 
 app = typer.Typer(help="Register, validate, prepare and freeze participant-level data.", no_args_is_help=True)
 add_app = typer.Typer(help="Add a participant-level source to data.yaml and register it.", no_args_is_help=True)
 app.add_typer(add_app, name="add")
+gwas_app = typer.Typer(help="GWAS summary statistics: list and (re)run GWASLab.", no_args_is_help=True)
+app.add_typer(gwas_app, name="gwas")
+
+
+@gwas_app.command("list")
+def gwas_list(phenotype: str | None = typer.Option(None, "--phenotype", help="only GWAS for this phenotype")) -> None:
+    """GWAS in this project, optionally only those for one phenotype (--phenotype <name or id>)."""
+    from efgpp.data.artifacts import ArtifactStore
+    from efgpp.data.registry import Registry
+
+    project = load_project()
+    with Registry.open(project) as reg:
+        done = {a.source_id: a for a in ArtifactStore(reg).find(artifact_type="gwas_sumstats")}
+    rows = []
+    for g in project.data.gwas:
+        targets = g.phenotypes or [g.trait]
+        if phenotype and phenotype not in targets and phenotype != g.trait:
+            continue
+        art = done.get(g.id)
+        rows.append([g.id, g.trait, ", ".join(targets), g.ancestry or "", g.n_cases or "", g.n_controls or "",
+                     art.genome_build if art else "not run", f"{art.feature_count:,}" if art and art.feature_count else ""])
+    console.print(table("GWAS" + (f" for {phenotype}" if phenotype else ""),
+                        ["id", "trait", "for phenotype", "ancestry", "cases", "controls", "build", "variants"], rows))
+
+
+@gwas_app.command("run")
+def gwas_run(gwas_id: str = typer.Argument(...), force: bool = typer.Option(False, "--force")) -> None:
+    """(Re)process one GWAS with GWASLab now."""
+    from efgpp.data.gwas import run_gwas
+
+    project = load_project()
+    out = run_gwas(project, gwas_id, force=force)
+    console.print(f"[green]✓[/] {gwas_id}: {out}")
 
 
 def _register(project, source_id: str) -> None:  # type: ignore[no-untyped-def]
@@ -43,18 +77,25 @@ def _timeline(event_column: str | None, time_column: str | None) -> TimelineSpec
 def add_genotype(
     path: str = typer.Option(..., "--path", help="PLINK prefix, or BGEN/VCF/BCF file"),
     format: str = typer.Option("auto", "--format", help="pgen | bed | bgen | vcf | bcf | auto"),
-    build: str = typer.Option("auto", "--build", help="GRCh37 | GRCh38 | auto"),
+    build: str = typer.Option("auto", "--build", help="GRCh37 | GRCh38 | auto (detected, then lifted to GRCh38)"),
     mode: StorageMode = typer.Option(StorageMode.REFERENCE, "--mode"),
     source_id: str | None = typer.Option(None, "--id"),
     origin: Origin = typer.Option(Origin.OBSERVED, "--origin"),
-    sample_id_mode: str = typer.Option("iid", "--sample-id-mode", help="iid | fid_iid"),
+    sample_id_mode: str = typer.Option("auto", "--sample-id-mode", help="iid | fid_iid | auto"),
 ) -> None:
-    """Add a genotype dataset (referenced in place by default; never duplicated)."""
+    """Add a genotype dataset (referenced in place; format and sample IDs inferred by modules/genotype.py)."""
+    from efgpp.modules import load
+
     project = load_project()
+    guess = load(project, "genotype").infer_genotype(project.resolve(user_path(project, path)))
+    fmt = guess.format if format == "auto" else format
+    id_mode = guess.sample_id_mode if sample_id_mode == "auto" else sample_id_mode
+    console.print(f"[dim]genotype: {fmt}, {guess.samples:,} samples, sample IDs: {id_mode}"
+                  f"{' (' + guess.note + ')' if guess.note else ''}[/]")
     sid = source_id or project.data.next_id("GENO")
     project.data.observed.genotype.append(GenotypeSource(
-        id=sid, path=user_path(project, path), format=format, genome_build=build, mode=mode, origin=origin,
-        sample_id=SampleIdSpec(mode=sample_id_mode)))  # type: ignore[arg-type]
+        id=sid, path=user_path(project, path), format=fmt, genome_build=build, mode=mode, origin=origin,
+        sample_id=SampleIdSpec(mode=id_mode)))  # type: ignore[arg-type]
     project.save_data_config()
     _register(project, sid)
 
@@ -63,36 +104,38 @@ def add_genotype(
 def add_covariates(
     ctx: typer.Context,
     path: str = typer.Option(..., "--path"),
-    id_column: str = typer.Option("participant_id", "--id-column"),
+    id_column: str | None = typer.Option(None, "--id-column", help="default: inferred (IID, participant_id, eid, ...)"),
     columns: str | None = typer.Option(None, "--columns",
                                        help="covariate columns (space or comma separated); default: all except IDs"),
-    categorical: str = typer.Option("", "--categorical", help="comma-separated categorical columns"),
+    categorical: str = typer.Option("", "--categorical", help="extra categorical columns (others are inferred)"),
     event_column: str | None = typer.Option(None, "--event-column"),
     mode: StorageMode = typer.Option(StorageMode.AUTO, "--mode"),
     source_id: str | None = typer.Option(None, "--id"),
 ) -> None:
-    """Add a covariate table. Default: every column except the ID columns. Example: --columns age sex bmi"""
+    """Add a covariate table. ID column, covariates, roles (sex, age, PCs, batch) and categorical
+    columns are inferred by modules/covariates.py; column names are kept as they are."""
+    from efgpp.data.io import read_table
+    from efgpp.modules import load
+
     project = load_project()
-    variables = [c for part in [columns or "", *ctx.args] for c in part.replace(",", " ").split()]
-    if not variables:
-        from efgpp.data.io import table_columns
-
-        header = table_columns(project.resolve(user_path(project, path)))
-        variables = [c for c in header if c not in {id_column, "FID", "IID", "#FID", "#IID"}]
-        console.print(f"[dim]covariates: {', '.join(variables)}[/]")
-    missing = []
-    if columns is not None or ctx.args:
-        from efgpp.data.io import table_columns
-
-        header = table_columns(project.resolve(user_path(project, path)))
-        missing = [v for v in variables if v not in header]
-    if missing:
-        console.print(f"[red]columns not in the file: {', '.join(missing)}[/]; available: {', '.join(header)}")
+    df = read_table(project.resolve(user_path(project, path)))
+    wanted = [c for part in [columns or "", *ctx.args] for c in part.replace(",", " ").split()] or None
+    guess = load(project, "covariates").infer_covariates(df, id_column, wanted)
+    if guess.id_column is None:
+        console.print(f"[red]no participant ID column found; pass --id-column (columns: {', '.join(df.columns)})[/]")
         raise typer.Exit(2)
+    missing = [c for c, why in guess.skipped.items() if why == "not in the file"]
+    if missing:
+        console.print(f"[red]columns not in the file: {', '.join(missing)}[/]; available: {', '.join(df.columns)}")
+        raise typer.Exit(2)
+    extra_cat = [c for c in categorical.split(",") if c]
+    cats = list(dict.fromkeys([*guess.categorical, *extra_cat]))
+    console.print(table(f"Covariates (ID column: {guess.id_column})", ["column", "role", "type"],
+                        [[c, guess.roles[c], "categorical" if c in cats else "numeric"] for c in guess.variables]))
     sid = source_id or project.data.next_id("COV")
     project.data.observed.covariates.append(CovSource(
-        id=sid, path=user_path(project, path), participant_id_column=id_column, variables=variables,
-        categorical=[c for c in categorical.split(",") if c], mode=mode, timeline=_timeline(event_column, None)))
+        id=sid, path=user_path(project, path), participant_id_column=guess.id_column, variables=guess.variables,
+        categorical=cats, roles=guess.roles, mode=mode, timeline=_timeline(event_column, None)))
     project.save_data_config()
     _register(project, sid)
 
@@ -146,29 +189,79 @@ for _m, _p in ((Modality.EXPRESSION, "RNA"), (Modality.METHYLATION, "METH"), (Mo
 def add_gwas(
     ctx: typer.Context,
     path: str = typer.Option(..., "--path", help="GWAS summary statistics file (any text/gz format)"),
-    trait: str = typer.Option(..., "--trait", help="free-text trait of this GWAS"),
+    trait: str | None = typer.Option(None, "--trait", help="trait this GWAS studied (default: file name)"),
+    phenotype: list[str] = typer.Option([], "--phenotype",
+                                        help="project phenotype(s) this GWAS is for (repeatable); default: --trait"),
+    ancestry: str | None = typer.Option(None, "--ancestry", help="e.g. European, EUR, East Asian, multi-ancestry"),
+    n_cases: int | None = typer.Option(None, "--n-cases"),
+    n_controls: int | None = typer.Option(None, "--n-controls"),
+    n: int | None = typer.Option(None, "--n", help="total sample size when the file has no N column"),
+    study: str | None = typer.Option(None, "--study", help="consortium / publication / GWAS Catalog accession"),
     build: str = typer.Option("auto", "--build", help="GRCh37 | GRCh38 | auto (GWASLab infer_build)"),
     fmt: str = typer.Option("auto", "--fmt", help="GWASLab format (ssf, gwascatalog, plink2, regenie, ...) or auto"),
-    col: list[str] = typer.Option([], "--col", help="GWASLab keyword=column, e.g. --col chrom=CHR --col pos=BP"),
-    n: int | None = typer.Option(None, "--n", help="constant sample size if the file has no N column"),
+    col: list[str] = typer.Option([], "--col", help="override one mapping: GWASLab keyword=column, e.g. pos=BP"),
+    run: bool = typer.Option(True, "--run/--no-run", help="process with GWASLab now (default) or at `data prepare`"),
     source_id: str | None = typer.Option(None, "--id"),
 ) -> None:
-    """Add GWAS summary statistics (processed with GWASLab and lifted to the target build)."""
+    """Add GWAS summary statistics. Columns are recognised by modules/gwas.py, GWASLab checks the
+    file, infers the build and lifts it to GRCh38; the original column names are kept."""
+    import gzip
+
     from efgpp.config.data import GwasSource
+    from efgpp.modules import load
 
     project = load_project()
-    columns = {}
+    file_path = project.resolve(user_path(project, path))
+    opener = gzip.open if file_path.name.endswith((".gz", ".bgz")) else open
+    with opener(file_path, "rt", encoding="utf-8", errors="replace") as fh:  # type: ignore[operator]
+        header = fh.readline().replace(",", " ").split()
+    gwas_module = load(project, "gwas")
+    columns = gwas_module.infer_gwas_columns(header)
     for item in [*col, *ctx.args]:
         key, _, value = item.partition("=")
         if not value:
             console.print(f"[red]--col expects keyword=column, got {item!r}[/]")
             raise typer.Exit(2)
         columns[key.strip()] = value.strip()
+    unknown = [v for v in columns.values() if v not in header]
+    if unknown:
+        console.print(f"[red]columns not in the file: {unknown}[/]; header: {' '.join(header)}")
+        raise typer.Exit(2)
+    missing = gwas_module.missing_essentials(columns)
+    if missing:
+        console.print(f"[red]could not find: {', '.join(missing)}[/] in {' '.join(header)}; add --col keyword=column")
+        raise typer.Exit(2)
+    trait = trait or file_path.name.split(".")[0]
+    targets = list(phenotype)
+    if not targets and any(trait in (p.id, p.name) for p in project.data.observed.phenotypes):
+        targets = [trait]
+    unmapped = [c for c in header if c not in columns.values()]
+    console.print(table("GWAS columns (GWASLab keyword -> column)", ["keyword", "column"],
+                        [[k, v] for k, v in columns.items()] + [["(kept as is)", c] for c in unmapped]))
     gid = source_id or project.data.next_id("GWAS")
-    project.data.gwas.append(GwasSource(id=gid, path=user_path(project, path), trait=trait, build=build, fmt=fmt,
-                                        columns=columns, n=n))
+    project.data.gwas.append(GwasSource(
+        id=gid, path=user_path(project, path), trait=trait, phenotypes=targets, ancestry=ancestry, n_cases=n_cases,
+        n_controls=n_controls, n=n, study=study, build=build, fmt=fmt, columns=columns))
     project.save_data_config()
-    console.print(f"[green]✓[/] {gid} added ({trait}); processed by `efgpp data prepare` (step gwas.{gid})")
+    details = ", ".join(x for x in (ancestry, f"{n_cases:,} cases" if n_cases else "",
+                                    f"{n_controls:,} controls" if n_controls else "") if x)
+    console.print(f"[green]✓[/] {gid} added: {trait}{' (' + details + ')' if details else ''}"
+                  f"{'; for ' + ', '.join(targets) if targets else ''}")
+    if not run:
+        console.print(f"[dim]processed by `efgpp data prepare` (step gwas.{gid})[/]")
+        return
+    from efgpp.data.gwas import run_gwas
+    from efgpp.setup.tools import available
+
+    if not available(project, "gwaslab"):
+        console.print("[yellow]GWASLab is not installed: run `efgpp setup tools gwaslab`, then "
+                      f"`efgpp data gwas run {gid}` (or `efgpp data prepare`)[/]")
+        return
+    console.print("[dim]running GWASLab (basic_check, infer_build, liftover to "
+                  f"{project.config.defaults.target_build})...[/]")
+    out = run_gwas(Project.load(project.root), gid)
+    console.print(f"[green]✓[/] {gid}: {out.get('rows'):,} variants, build {out.get('build_detected')}"
+                  f"{', lifted ' + out['lifted'] if out.get('lifted') else ''} -> {out.get('path')}")
 
 
 @add_app.command("clinical")
@@ -256,27 +349,24 @@ def validate() -> None:
 
 @app.command()
 def plan() -> None:
-    """What can be generated now, what cannot, and why. Writes workflow/plan.json + Snakefile."""
+    """What can be generated now, what cannot, and why. Writes workflow/plan.json."""
     from efgpp.data.plan import build_plan, write_plan
-    from efgpp.workflow.snakemake import write_snakefile
 
     project = load_project()
     steps = build_plan(project)
     write_plan(project, steps)
-    write_snakefile(project, steps)
     rows = [["[green]run[/]" if s.enabled else "[yellow]blocked[/]", s.id, s.description if s.enabled else s.reason,
              ",".join(s.tools) or "-", s.env] for s in steps]
     console.print(table("EFGPP DATA PLAN", ["", "step", "what / why not", "tools", "env"], rows))
-    console.print(f"[dim]{project.relative(project.path('workflow', 'plan.json'))} and workflow/Snakefile written[/]")
+    console.print(f"[dim]{project.relative(project.path('workflow', 'plan.json'))} written[/]")
 
 
-def _run(kinds: set[str] | None, cores: int | None, executor: str | None, engine: str | None, force: bool, dry_run: bool) -> None:
+def _run(kinds: set[str] | None, cores: int | None, force: bool, dry_run: bool) -> None:
     from efgpp.setup.lock import write_lock
     from efgpp.workflow.executor import prepare
 
     project = load_project()
-    outcomes = prepare(project, kinds=kinds, cores=cores, executor=executor, engine=engine, force=force,
-                       dry_run=dry_run, console=console)
+    outcomes = prepare(project, kinds=kinds, cores=cores, force=force, dry_run=dry_run, console=console)
     write_lock(project)
     rows = [[o.step_id, o.status, f"{o.seconds:.1f}s" if o.seconds else "", o.detail or ""] for o in outcomes]
     console.print(table("Summary", ["step", "status", "time", "detail"], rows))
@@ -284,36 +374,30 @@ def _run(kinds: set[str] | None, cores: int | None, executor: str | None, engine
         raise typer.Exit(1)
 
 
-EXECUTOR = typer.Option(None, "--executor", help="local | slurm (through Snakemake)")
-ENGINE = typer.Option(None, "--engine", help="snakemake | builtin | auto")
-
-
 @app.command()
-def prepare(cores: int = typer.Option(None, "--cores"), executor: str = EXECUTOR, engine: str = ENGINE,
+def prepare(cores: int = typer.Option(None, "--cores"),
             force: bool = typer.Option(False, "--force", help="rerun up-to-date steps"),
             dry_run: bool = typer.Option(False, "--dry-run")) -> None:
     """Run the full data lifecycle (register -> ... -> availability -> report)."""
-    _run(None, cores, executor, engine, force, dry_run)
+    _run(None, cores, force, dry_run)
 
 
 @app.command()
-def qc(cores: int = typer.Option(None, "--cores"), executor: str = EXECUTOR, engine: str = ENGINE,
-       force: bool = typer.Option(False, "--force")) -> None:
+def qc(cores: int = typer.Option(None, "--cores"), force: bool = typer.Option(False, "--force")) -> None:
     """Run QC steps only (and what they depend on)."""
-    _run({"qc", "genotype_qc"}, cores, executor, engine, force, False)
+    _run({"qc", "genotype_qc"}, cores, force, False)
 
 
 @app.command()
-def derive(cores: int = typer.Option(None, "--cores"), executor: str = EXECUTOR, engine: str = ENGINE,
-           force: bool = typer.Option(False, "--force")) -> None:
-    """Run phenotype-independent derivations, annotation and prediction steps."""
-    _run({"pca", "roh", "ancestry", "annotate_", "predict"}, cores, executor, engine, force, False)
+def derive(cores: int = typer.Option(None, "--cores"), force: bool = typer.Option(False, "--force")) -> None:
+    """Run phenotype-independent derivations, annotation, GWAS and prediction steps."""
+    _run({"pca", "roh", "ancestry", "annotate_", "predict", "gwas"}, cores, force, False)
 
 
 @app.command()
 def step(step_id: str = typer.Argument(...), threads: int = typer.Option(1, "--threads"),
          marker: str | None = typer.Option(None, "--marker")) -> None:
-    """Run a single plan step (used by Snakemake rules and SLURM scripts)."""
+    """Run a single plan step (used by the SLURM scripts from `efgpp export slurm`)."""
     from efgpp.data.plan import build_plan, run_step
     from efgpp.workflow.executor import write_marker
 

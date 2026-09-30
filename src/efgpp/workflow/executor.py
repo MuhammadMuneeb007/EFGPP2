@@ -1,7 +1,9 @@
-"""Running a data plan: through Snakemake when available, otherwise the built-in executor.
+"""Running a data plan with EFGPP's built-in executor.
 
-Both paths share the same step markers (work/steps/<id>.done, containing the step's input
-fingerprint), so a project can move between them freely.
+Steps run in dependency order; errors are printed directly. Each finished step writes a
+marker (work/steps/<id>.done) with its input fingerprint, so unchanged steps are skipped on
+the next run. For a cluster, `efgpp export slurm` writes sbatch scripts that call the same
+steps (`efgpp data step <id>`).
 """
 
 from __future__ import annotations
@@ -16,7 +18,6 @@ from rich.console import Console
 
 from efgpp.data.plan import Step, build_plan, fingerprint, run_step, select, write_plan
 from efgpp.project import Project
-from efgpp.setup.tools import available
 
 
 @dataclass
@@ -44,14 +45,8 @@ def is_current(project: Project, step: Step) -> bool:
 
 
 def choose_engine(project: Project, requested: str | None) -> str:
-    """auto: the built-in executor for local runs (errors shown directly in the terminal);
-    Snakemake only for cluster execution (--executor slurm) or when chosen explicitly."""
-    engine = requested or project.config.execution.engine
-    if engine == "auto":
-        return "builtin"
-    if engine == "snakemake" and not available(project, "snakemake"):
-        raise RuntimeError("engine snakemake requested but Snakemake is not installed (efgpp setup tools snakemake)")
-    return engine
+    """Always the built-in executor (kept for callers of the old API)."""
+    return "builtin"
 
 
 def run_builtin(project: Project, steps: list[Step], *, cores: int, force: bool = False,
@@ -95,7 +90,7 @@ def run_builtin(project: Project, steps: list[Step], *, cores: int, force: bool 
 
 
 def prepare(project: Project, *, kinds: set[str] | None = None, cores: int | None = None,
-            executor: str | None = None, engine: str | None = None, force: bool = False,
+            engine: str | None = None, force: bool = False,
             dry_run: bool = False, console: Console | None = None) -> list[StepOutcome]:
     """Plan and execute. `kinds` restricts to some step kinds (plus their dependencies)."""
     console = console or Console()
@@ -104,19 +99,6 @@ def prepare(project: Project, *, kinds: set[str] | None = None, cores: int | Non
     steps = build_plan(project)
     write_plan(project, steps)
     chosen = select(steps, kinds) if kinds else steps
-    selected_engine = choose_engine(project, "snakemake" if executor and executor != "local" else engine)
-    if selected_engine == "snakemake":
-        from efgpp.workflow.snakemake import run_snakemake, write_snakefile
-
-        write_snakefile(project, steps)
-        for s in chosen:  # invalidate stale or always-run markers so Snakemake reruns them
-            if s.enabled and (force or s.always_run or not is_current(project, s)):
-                marker_path(project, s).unlink(missing_ok=True)
-        code = run_snakemake(project, cores=cores, executor=executor, dry_run=dry_run)
-        if code != 0:
-            show_failed_step_logs(project, chosen, console)
-        status = "done" if code == 0 else "failed"
-        return [StepOutcome("snakemake", status, detail=f"exit code {code}")]
     if dry_run:
         return [StepOutcome(s.id, "planned" if s.enabled else "disabled", detail=s.reason) for s in chosen]
     return run_builtin(project, chosen, cores=cores, force=force, console=console)
@@ -134,14 +116,3 @@ def ensure_simulation(project: Project, console: Console) -> None:
         added = run_simulation(project)
         console.print(f"[cyan]>[/] simulate: generated {', '.join(added)}")
 
-
-def show_failed_step_logs(project: Project, steps: list[Step], console: Console) -> None:
-    """Snakemake only says 'check log file(s)'; print the end of each failed step's log."""
-    for s in steps:
-        log = project.root / "logs" / "snakemake" / f"{s.id}.log"
-        if s.enabled and not marker_path(project, s).exists() and log.exists():
-            lines = log.read_text(encoding="utf-8", errors="replace").strip().splitlines()
-            if lines:
-                console.print(f"\n[red]x {s.id}[/] ({project.relative(log)}):")
-                for line in lines[-6:]:
-                    console.print(f"  {line}")

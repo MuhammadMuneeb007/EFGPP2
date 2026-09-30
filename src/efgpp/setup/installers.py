@@ -13,7 +13,7 @@ For each tool EFGPP first creates its own conda environment from conda-forge + B
 (mamba > micromamba > conda; micromamba is downloaded when none is installed). Only if that
 fails does it fall back to the official source:
     official binary   PLINK 2, PLINK 1.9, FlashPCA2 (FlashPCA2 is not in conda at all)
-    Python venv       Snakemake (+ SLURM plugin), MultiQC, OpenCRAVAT      (uv, else venv+pip)
+    Python venv       MultiQC, OpenCRAVAT, GWASLab                         (uv, else venv+pip)
     source build      htslib (tabix, bgzip) + bcftools                     (needs gcc, make, zlib)
     source + venv     MetaXcan / PrediXcan                                 (GitHub archive + Python 3.11)
     container         Ensembl VEP                                          (Apptainer/Singularity/Docker)
@@ -50,7 +50,6 @@ VEP_IMAGE = "docker://ensemblorg/ensembl-vep:latest"
 
 PYTHON_TOOLS: dict[str, tuple[str, list[str], list[str]]] = {
     # tool: (environment name, pip requirements, executables exposed in bin/)
-    "snakemake": ("core", ["snakemake>=8", "snakemake-executor-plugin-slurm"], ["snakemake"]),
     "multiqc": ("reporting", ["multiqc"], ["multiqc"]),
     "oc": ("opencravat", ["open-cravat"], ["oc"]),
 }
@@ -78,8 +77,6 @@ CONDA_TOOLS: dict[str, tuple[str, list[str], list[str], list[str]]] = {
     "bcftools": ("bcftools", ["bcftools", "htslib"], [], ["bcftools", "tabix", "bgzip"]),
     "tabix": ("bcftools", ["bcftools", "htslib"], [], ["bcftools", "tabix", "bgzip"]),
     "bgzip": ("bcftools", ["bcftools", "htslib"], [], ["bcftools", "tabix", "bgzip"]),
-    "snakemake": ("snakemake", ["python>=3.11", "snakemake-minimal", "snakemake-executor-plugin-slurm"], [],
-                  ["snakemake"]),
     "multiqc": ("multiqc", ["multiqc"], [], ["multiqc"]),
     "oc": ("opencravat", ["open-cravat"], [], ["oc"]),
     "vep": ("vep", ["ensembl-vep", "perl", "htslib"], [], ["vep", "vep_install"]),
@@ -405,7 +402,6 @@ INSTALLERS: dict[str, Callable[[Path, PlatformInfo, Progress], InstallResult]] =
     "bcftools": install_htslib_bcftools,
     "tabix": install_htslib_bcftools,
     "bgzip": install_htslib_bcftools,
-    "snakemake": lambda r, i, s: install_python_tool("snakemake", r, i, s),
     "multiqc": lambda r, i, s: install_python_tool("multiqc", r, i, s),
     "oc": lambda r, i, s: install_python_tool("oc", r, i, s),
     "predixcan": install_metaxcan,
@@ -415,7 +411,6 @@ INSTALLERS: dict[str, Callable[[Path, PlatformInfo, Progress], InstallResult]] =
 
 # What `efgpp setup data --components ...` needs from each component.
 COMPONENT_TOOLS = {
-    "core": ["snakemake"],
     "genetics": ["plink2", "plink", "bcftools", "tabix", "bgzip", "flashpca2"],
     "annotation": ["vep", "oc"],
     "metaxcan": ["predixcan"],

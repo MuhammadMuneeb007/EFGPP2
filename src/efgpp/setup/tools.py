@@ -41,8 +41,6 @@ class ToolSpec:
 TOOLS: dict[str, ToolSpec] = {
     t.name: t
     for t in (
-        ToolSpec("snakemake", "core", "CORE", ("snakemake",), conda_package="snakemake-minimal", optional=True,
-                 description="optional: the built-in executor runs plans locally without it"),
         ToolSpec("plink2", "genetics", "GENETICS", ("plink2",), conda_package="plink2",
                  description="genotype QC, PCA, relatedness, format conversion"),
         ToolSpec("plink", "genetics", "GENETICS", ("plink", "plink1.9"), conda_package="plink",
@@ -71,7 +69,7 @@ TOOLS: dict[str, ToolSpec] = {
     )
 }
 
-ENV_NAMES = ("core", "genetics", "annotation", "metaxcan", "reporting")
+ENV_NAMES = ("genetics", "annotation", "metaxcan", "reporting")
 
 
 @dataclass

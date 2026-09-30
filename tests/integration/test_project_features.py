@@ -90,9 +90,10 @@ def test_cli_end_to_end(tmp_path: Path, cohort_dir: Path, run_cli, monkeypatch) 
     assert any((root / "data" / "observed" / "phenotype" / "PH001").iterdir())
     out = run_cli("data", "inspect").output
     assert "GENO001" in out and "PH002" in out
-    assert "treated as categorical" in run_cli("data", "validate").output  # a warning, not an error
+    assert "all sources valid" in run_cli("data", "validate").output
+    assert data["observed"]["covariates"][0]["categorical"] == ["sex"]  # M/F inferred as categorical
     run_cli("data", "plan")
-    run_cli("data", "prepare", "--engine", "builtin", expect=None)
+    run_cli("data", "prepare", expect=None)
     out = run_cli("data", "availability").output
     assert "OBSERVED" in out and "PH001" in out
     run_cli("data", "report")

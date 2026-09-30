@@ -17,11 +17,12 @@ def _split(v: str | None) -> list[str] | None:
 
 @app.command("add")
 def add(
-    name: str = typer.Option(..., "--name", help="phenotype name (free text; never interpreted)"),
     path: str = typer.Option(..., "--path"),
-    id_column: str = typer.Option("participant_id", "--id-column"),
-    value_column: str = typer.Option(..., "--value-column"),
-    type: PhenotypeType = typer.Option(..., "--type"),
+    name: str | None = typer.Option(None, "--name",
+                                    help="phenotype name (default: the file name for one-column files, else the column)"),
+    id_column: str | None = typer.Option(None, "--id-column", help="default: inferred (IID, participant_id, eid, ...)"),
+    value_column: str | None = typer.Option(None, "--value-column", help="default: every phenotype column in the file"),
+    type: PhenotypeType | None = typer.Option(None, "--type", help="default: inferred (binary/continuous/multiclass)"),
     levels: str | None = typer.Option(None, "--levels", help="comma-separated classes (ordered for ordinal)"),
     case_values: str | None = typer.Option(None, "--case-values", help="binary: comma-separated case codes"),
     control_values: str | None = typer.Option(None, "--control-values", help="binary: comma-separated control codes"),
@@ -34,27 +35,58 @@ def add(
     origin: Origin = typer.Option(Origin.OBSERVED, "--origin"),
     phenotype_id: str | None = typer.Option(None, "--id"),
 ) -> None:
-    """Add a phenotype column from a table."""
+    """Add phenotype(s) from a table. The ID column, the phenotype column(s), their type and the
+    case/control coding are inferred by modules/phenotype.py unless given."""
+    from pathlib import Path
+
+    from efgpp.data.io import read_table
+    from efgpp.modules import load
+
     project = load_project()
-    pid = phenotype_id or project.data.next_id("PH")
-    spec = dict(
-        id=pid, name=name, path=user_path(project, path), participant_id_column=id_column, value_column=value_column,
-        type=type, levels=_split(levels), case_values=_split(case_values), control_values=_split(control_values),
-        units=units, mode=mode, origin=origin,
-        ontology_term=OntologyTerm(id=ontology_id, label=ontology_label) if ontology_id else None,
-        timeline=TimelineSpec(event_column=event_column) if event_column else None,
-    )
-    if missing_values is not None:
-        spec["missing_values"] = _split(missing_values) or []
-    try:
-        project.data.observed.phenotypes.append(PhenotypeSource(**spec))  # type: ignore[arg-type]
-        project.save_data_config()
-    except ValueError as exc:
-        console.print(f"[red]{exc}[/]")
-        raise typer.Exit(2) from exc
+    file_path = project.resolve(user_path(project, path))
+    df = read_table(file_path)
+    module = load(project, "phenotype")
+    guess = module.infer_phenotypes(df, id_column, [value_column] if value_column else None)
+    if guess.id_column is None:
+        console.print(f"[red]no participant ID column found; pass --id-column (columns: {', '.join(df.columns)})[/]")
+        raise typer.Exit(2)
+    if not guess.phenotypes:
+        console.print(f"[red]no phenotype column found[/] ({guess.skipped}); pass --value-column")
+        raise typer.Exit(2)
+    stem = Path(file_path.name).name.split(".")[0]
+    single = len(guess.phenotypes) == 1
+    rows, added = [], []
+    for info in guess.phenotypes:
+        ptype = type or PhenotypeType(info.type)
+        pname = name if (name and single) else module.default_name(info.column, stem, single)
+        pid = phenotype_id if (phenotype_id and single) else project.data.next_id("PH")
+        spec = dict(
+            id=pid, name=pname, path=user_path(project, path), participant_id_column=guess.id_column,
+            value_column=info.column, type=ptype,
+            levels=_split(levels) or (info.levels if ptype in (PhenotypeType.MULTICLASS, PhenotypeType.ORDINAL) else None),
+            case_values=_split(case_values) or (info.case_values if ptype == PhenotypeType.BINARY else None),
+            control_values=_split(control_values) or (info.control_values if ptype == PhenotypeType.BINARY else None),
+            units=units, mode=mode, origin=origin,
+            ontology_term=OntologyTerm(id=ontology_id, label=ontology_label) if ontology_id else None,
+            timeline=TimelineSpec(event_column=event_column) if event_column else None,
+        )
+        if missing_values is not None:
+            spec["missing_values"] = _split(missing_values) or []
+        try:
+            project.data.observed.phenotypes.append(PhenotypeSource(**spec))  # type: ignore[arg-type]
+            project.save_data_config()
+        except ValueError as exc:
+            console.print(f"[red]{pname}: {exc}[/]")
+            raise typer.Exit(2) from exc
+        rows.append([pid, pname, info.column, ptype.value, f"{info.n_observed:,}", info.note])
+        added.append(pid)
+    console.print(table(f"Phenotypes (ID column: {guess.id_column})", ["id", "name", "column", "type", "values", "coding"], rows))
+    for col, why in guess.skipped.items():
+        console.print(f"[dim]skipped {col}: {why}[/]")
     from efgpp.cli.data import _register
 
-    _register(project, pid)
+    for pid in added:
+        _register(project, pid)
 
 
 @app.command("list")

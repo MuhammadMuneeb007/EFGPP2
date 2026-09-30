@@ -54,10 +54,7 @@ PROJECT_DIRS = (
     "snapshots",
     "work",
     "reports/data",
-    "workflow/rules",
     "workflow/envs",
-    "workflow/profiles/local",
-    "workflow/profiles/slurm",
 )
 
 # Where each (origin, modality) pair lives under data/.

@@ -4,8 +4,15 @@ library, GWASLab and pandas/pyarrow, so it runs without EFGPP installed.
 
     gwaslab-python gwas_gwaslab_job.py job.json
 
-job.json: {input, fmt, build ("19"/"38"/"99"), columns {gwaslab keyword: column}, n,
-           target ("38"), chains {"19->38": path, "38->19": path}, output, report}
+job.json: {input, fmt, build ("19"/"38"/"99"), columns {gwaslab keyword: column}, other [columns],
+           n, ncase, ncontrol, target ("38"), chains {"19->38": path, "38->19": path},
+           output (original column names), output_gwaslab (GWASLab names), report}
+
+Two outputs:
+  output          the original column names of the input file (values checked and lifted by
+                  GWASLab; rows removed by basic_check are gone). Columns GWASLab adds are kept
+                  with GWASLab's names (e.g. N_CASE / N_CONTROL when given as numbers).
+  output_gwaslab  GWASLab's standard names (SNPID, CHR, POS, EA, NEA, BETA, SE, P, ..., STATUS)
 """
 
 from __future__ import annotations
@@ -15,6 +22,13 @@ import sys
 import time
 from pathlib import Path
 
+# GWASLab keyword -> the column name GWASLab gives it
+GWASLAB_NAMES = {
+    "snpid": "SNPID", "rsid": "rsID", "chrom": "CHR", "pos": "POS", "ea": "EA", "nea": "NEA", "eaf": "EAF",
+    "beta": "BETA", "OR": "OR", "se": "SE", "z": "Z", "p": "P", "mlog10p": "MLOG10P", "n": "N",
+    "ncase": "N_CASE", "ncontrol": "N_CONTROL", "info": "INFO",
+}
+
 
 def main(job_path: str) -> int:
     job = json.loads(Path(job_path).read_text(encoding="utf-8"))
@@ -23,17 +37,21 @@ def main(job_path: str) -> int:
     import gwaslab as gl
 
     report: dict = {"gwaslab_version": md.version("gwaslab"), "input": job["input"], "started": time.time()}
-    kwargs = dict(job.get("columns") or {})
-    if job.get("n") is not None:
-        kwargs["n"] = int(job["n"])
+    columns = dict(job.get("columns") or {})
+    kwargs: dict = dict(columns)
+    for key in ("n", "ncase", "ncontrol"):
+        if job.get(key) is not None and key not in columns:
+            kwargs[key] = int(job[key])  # constant sample sizes become N / N_CASE / N_CONTROL
+    if job.get("other"):
+        kwargs["other"] = list(job["other"])  # keep every unmapped column
     fmt = job.get("fmt") or "auto"
     build = job.get("build") or "99"
     try:
-        ss = gl.Sumstats(job["input"], fmt=None if fmt == "none" else fmt, build=build, **kwargs)
+        ss = gl.Sumstats(job["input"], fmt=None if fmt in ("none", "auto") and columns else fmt, build=build, **kwargs)
     except Exception as exc:  # noqa: BLE001 - retry with explicit columns only
-        if not kwargs:
+        if not columns:
             raise
-        report["fmt_auto_failed"] = f"{type(exc).__name__}: {exc}"
+        report["fmt_failed"] = f"{type(exc).__name__}: {exc}"
         ss = gl.Sumstats(job["input"], build=build, **kwargs)
     report["rows_loaded"] = int(len(ss.data))
 
@@ -60,10 +78,16 @@ def main(job_path: str) -> int:
 
     data = ss.data
     report["rows_final"] = int(len(data))
-    report["columns"] = [str(c) for c in data.columns]
-    out = Path(job["output"])
-    out.parent.mkdir(parents=True, exist_ok=True)
-    data.to_parquet(out, index=False)
+    report["columns_gwaslab"] = [str(c) for c in data.columns]
+    Path(job["output_gwaslab"]).parent.mkdir(parents=True, exist_ok=True)
+    data.to_parquet(job["output_gwaslab"], index=False)
+
+    # Same rows and values, original column names.
+    back = {GWASLAB_NAMES[k]: v for k, v in columns.items() if k in GWASLAB_NAMES}
+    original = data.drop(columns=[c for c in ("STATUS",) if c in data.columns]).rename(columns=back)
+    report["columns_original"] = [str(c) for c in original.columns]
+    original.to_parquet(job["output"], index=False)
+
     report["finished"] = time.time()
     Path(job["report"]).write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
     return 0

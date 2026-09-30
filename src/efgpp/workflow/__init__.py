@@ -1,6 +1,5 @@
-"""Workflow execution: EFGPP decides WHAT must happen; Snakemake (or the built-in
-executor where Snakemake is unavailable) decides WHEN, in which order, in parallel,
-with restarts and on which executor (local or SLURM)."""
+"""Workflow execution: EFGPP plans WHAT must happen and runs it with its built-in executor;
+`efgpp export slurm` writes explicit SLURM scripts for clusters."""
 
 from __future__ import annotations
 
