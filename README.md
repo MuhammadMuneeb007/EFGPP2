@@ -125,7 +125,9 @@ Every environment was solved for `linux-64` against conda-forge + Bioconda only 
 mamba/micromamba/conda is installed, EFGPP downloads micromamba itself. Bioconda's `bolt-lmm`
 is uninstallable (it needs an `nlopt` release that does not exist), so BOLT-LMM comes from the
 official tarball. DBSLMM's `dbslmm` executable is only on Google Drive and must be downloaded by
-hand into `<install root>/opt/DBSLMM/software/dbslmm`.
+hand into `<install root>/opt/DBSLMM/software/dbslmm`. `sim1000G` was removed from CRAN (June 2025, its
+dependency `hapsim` was archived); both are installed from the CRAN archive. Packages declaring
+C++11 (lassosum) are compiled as C++17, because current RcppArmadillo needs C++14 or newer.
 
 ### Check the installation
 

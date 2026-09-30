@@ -16,6 +16,8 @@
 name: efgpp
 channels:
   - conda-forge
+  - bioconda   # pyliftover
+  - nodefaults  # never Anaconda's commercial defaults channel
 dependencies:
   - python=3.12
   - pip

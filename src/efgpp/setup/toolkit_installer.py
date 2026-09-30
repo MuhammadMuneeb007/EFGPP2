@@ -168,6 +168,15 @@ for (p in c({bioc_pkgs})) {{
   }}
   report(p, have(p), msg)
 }}
+for (spec in c({archive_pkgs})) {{
+  p <- sub("@.*$", "", spec); v <- sub("^.*@", "", spec)
+  msg <- ""
+  if (install_mode && !have(p)) {{
+    url <- sprintf("{cran}/src/contrib/Archive/%s/%s_%s.tar.gz", p, p, v)
+    msg <- try_install(install.packages(url, repos = NULL, type = "source"))
+  }}
+  report(p, have(p), msg)
+}}
 for (r in c({gh_pkgs})) {{
   p <- sub("@.*$", "", basename(r))
   msg <- ""
@@ -188,20 +197,25 @@ def install_r_packages(root: Path, tk: Toolkit, log: Path, say: Progress, result
                        check_only: bool = False) -> None:
     rscript = env_bin(root, tk.env) / "Rscript"  # type: ignore[arg-type]
     if not rscript.exists():
-        for p in [*tk.r_cran, *tk.r_bioc, *tk.r_github]:
+        for p in [*tk.r_cran, *tk.r_bioc, *tk.r_archive, *tk.r_github]:
             result.add("R", p, "missing", "R environment not installed")
         return
-    cran, bioc, gh = tk.r_cran, tk.r_bioc, tk.r_github
+    cran, bioc, gh, archive = tk.r_cran, tk.r_bioc, tk.r_github, tk.r_archive
     if check_only:  # an empty install list turns the script into a pure check
         say("checking R packages")
     else:
-        say(f"installing R packages ({len(cran) + len(bioc) + len(gh)}; compiling may take a while)")
+        say(f"installing R packages ({len(cran) + len(bioc) + len(gh) + len(archive)}; compiling may take a while)")
     script = R_SCRIPT.format(cran=CRAN, install="FALSE" if check_only else "TRUE", cran_pkgs=_r_vector(cran),
-                             bioc_pkgs=_r_vector(bioc), gh_pkgs=_r_vector(gh))
+                             bioc_pkgs=_r_vector(bioc), gh_pkgs=_r_vector(gh), archive_pkgs=_r_vector(archive))
     script_path = log.parent / f"{tk.name}_packages.R"
     script_path.write_text(script, encoding="utf-8")
     env = dict(os.environ)
     env["PATH"] = os.pathsep.join([str(env_bin(root, tk.env)), env.get("PATH", "")])  # type: ignore[arg-type]
+    # Packages that declare C++11 (e.g. lassosum) fail with current RcppArmadillo (needs C++14+):
+    # compile them as C++17 instead. Written to a private Makevars, never ~/.R/Makevars.
+    makevars = log.parent / "Makevars.efgpp"
+    makevars.write_text("CXX11STD = -std=gnu++17\nCXX14STD = -std=gnu++17\n", encoding="utf-8")
+    env["R_MAKEVARS_USER"] = str(makevars)
     proc = subprocess.run([str(rscript), str(script_path)], capture_output=True, text=True, env=env)
     with open(log, "a", encoding="utf-8") as fh:
         fh.write(proc.stdout + proc.stderr)
@@ -211,7 +225,7 @@ def install_r_packages(root: Path, tk: Toolkit, log: Path, say: Progress, result
             _, pkg, status, msg = (line.split("\t") + [""])[:4]
             seen.add(pkg)
             result.add("R", pkg, "ok" if status == "ok" else ("missing" if check_only else "failed"), msg[:200])
-    for p in [*cran, *bioc, *(sub.split("/")[-1].split("@")[0] for sub in gh)]:
+    for p in [*cran, *bioc, *(a.split("@")[0] for a in archive), *(sub.split("/")[-1].split("@")[0] for sub in gh)]:
         if p not in seen:
             result.add("R", p, "failed", f"R did not report (log: {log})")
     # Core packages installed through conda are checked by the same mechanism.
@@ -376,7 +390,7 @@ def install_toolkit(project: Project | None, name: str, *, shared: bool = False,
             if target.exists():
                 _link(target, root / "bin", exe)
         install_pip(root, tk, log, say, result)
-        if tk.r_cran or tk.r_bioc or tk.r_github:
+        if tk.r_cran or tk.r_bioc or tk.r_github or tk.r_archive:
             install_r_packages(root, tk, log, say, result)
     if tk.tools:
         from efgpp.setup.installers import install_tools
@@ -442,7 +456,7 @@ def check_toolkit(project: Project | None, name: str, *, shared: bool = False) -
         present = any((r / "opt" / repo.name).exists() for r in roots)
         result.add("repo", repo.name, ("manual" if repo.note and present else "ok") if present else "missing",
                    repo.note if present else "")
-    if tk.env and (tk.r_cran or tk.r_bioc or tk.r_github or any(c.startswith("r-") for c in tk.conda)):
+    if tk.env and (tk.r_cran or tk.r_bioc or tk.r_github or tk.r_archive or any(c.startswith("r-") for c in tk.conda)):
         log = root / "logs" / f"{name}.check.log"
         log.parent.mkdir(parents=True, exist_ok=True)
         log.write_text("", encoding="utf-8")

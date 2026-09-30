@@ -40,9 +40,9 @@ def test_catalogue_is_consistent() -> None:
 
 def test_r_script_install_and_check_modes() -> None:
     install = ti.R_SCRIPT.format(cran=ti.CRAN, install="TRUE", cran_pkgs=ti._r_vector(["sim1000G"]),
-                                 bioc_pkgs="", gh_pkgs=ti._r_vector(["tshmak/lassosum"]))
+                                 bioc_pkgs="", gh_pkgs=ti._r_vector(["tshmak/lassosum"]), archive_pkgs="")
     check = ti.R_SCRIPT.format(cran=ti.CRAN, install="FALSE", cran_pkgs=ti._r_vector(["sim1000G"]),
-                               bioc_pkgs="", gh_pkgs="")
+                               bioc_pkgs="", gh_pkgs="", archive_pkgs="")
     assert "install_mode <- TRUE" in install and '"tshmak/lassosum"' in install
     assert "install_mode <- FALSE" in check
     assert 'sprintf("EFGPP_R\\t%s\\t%s\\t%s\\n"' in check  # escapes reach R intact
@@ -93,3 +93,37 @@ def test_genotype_derived_toolkits() -> None:
     assert env == "spliceai" and "tensorflow>=2.10,<2.16" in conda  # TensorFlow only in its own environment
     env, conda, pip, _ = CONDA_TOOLS["predixcan"]
     assert "python=3.11" in conda and {"sqlalchemy", "patsy"} <= set(conda) and "bgen-reader" in pip
+
+
+def test_r_archive_packages_and_cxx_override() -> None:
+    from efgpp.setup.toolkit_installer import CRAN, R_SCRIPT, _r_vector
+    from efgpp.setup.toolkits import TOOLKITS
+
+    r = TOOLKITS["r"]
+    assert r.r_archive == ["hapsim@0.31", "sim1000G@1.40"] and "sim1000G" not in r.r_cran
+    assert {"r-gmp", "r-partitions"} <= set(r.conda)  # libgmp for permutations -> partitions
+    script = R_SCRIPT.format(cran=CRAN, install="TRUE", cran_pkgs=_r_vector(r.r_cran), bioc_pkgs="",
+                             gh_pkgs=_r_vector(r.r_github), archive_pkgs=_r_vector(r.r_archive))
+    assert f"{CRAN}/src/contrib/Archive/%s/%s_%s.tar.gz" in script and '"hapsim@0.31", "sim1000G@1.40"' in script
+
+
+def test_tool_in_software_bin_runs_in_its_env(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import os
+
+    import pytest
+
+    from efgpp.setup.tools import _owning_env
+
+    env = tmp_path / "envs" / "vep"
+    (env / "conda-meta").mkdir(parents=True)
+    (env / "bin").mkdir()
+    real = env / "bin" / "vep"
+    real.write_text("#!/bin/sh\n")
+    link = tmp_path / "bin" / "vep"
+    link.parent.mkdir()
+    try:
+        os.symlink(real, link)
+    except OSError:
+        pytest.skip("symlinks not permitted")
+    assert _owning_env(link) == env.resolve()  # vep_install then sees the env's tabix/bgzip/perl
+    assert _owning_env(real) is None

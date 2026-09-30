@@ -65,6 +65,7 @@ class Toolkit:
     r_cran: list[str] = field(default_factory=list)
     r_bioc: list[str] = field(default_factory=list)
     r_github: list[str] = field(default_factory=list)  # owner/repo[@ref]
+    r_archive: list[str] = field(default_factory=list)  # pkg@version from the CRAN archive (removed from CRAN)
     repos: list[Repo] = field(default_factory=list)
     downloads: list[Download] = field(default_factory=list)
     expose: list[str] = field(default_factory=list)  # env executables linked into <root>/bin
@@ -87,8 +88,13 @@ TOOLKITS: dict[str, Toolkit] = {t.name: t for t in (
                "r-remotes", "r-devtools", "r-optparse", "r-proc", "r-glmnet", "r-ranger", "r-caret",
                "r-superlearner", "r-dplyr", "r-matrix", "r-rcpp", "r-rcpparmadillo", "r-r.utils",
                "r-biocmanager", "r-genio", "r-ggplot2", "r-xgboost", "r-susier",
-               "bioconductor-genomicranges"],
-        r_cran=["permutations", "RapidoPGS", "sim1000G", "PANPRSnext"],
+               "bioconductor-genomicranges",
+               # GMP-based packages precompiled (permutations -> partitions needs libgmp);
+               # readr/stringr for sim1000G
+               "r-gmp", "r-partitions", "r-readr", "r-stringr", "r-mass"],
+        r_cran=["permutations", "RapidoPGS", "PANPRSnext"],
+        # sim1000G was removed from CRAN (2025-06-12, its dependency hapsim was archived)
+        r_archive=["hapsim@0.31", "sim1000G@1.40"],
         r_github=["tshmak/lassosum", "jpattee/penRegSum", "andrewhaoyu/CTSLEB", "pjnewcombe/R2BGLiMS",
                   "cran/EBPRS"],
         expose=["R", "Rscript"],

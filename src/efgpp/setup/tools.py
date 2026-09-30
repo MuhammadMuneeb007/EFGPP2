@@ -119,6 +119,16 @@ def _candidate_names(exe: str) -> list[str]:
     return [exe]
 
 
+def _owning_env(path: Path) -> Path | None:
+    """The conda environment a software/bin symlink points into (its bin/ goes on PATH when run)."""
+    try:
+        real = path.resolve()
+    except OSError:
+        return None
+    prefix = real.parent.parent
+    return prefix if real != path and (prefix / "conda-meta").is_dir() else None
+
+
 def resolve(project: Project | None, name: str) -> ResolvedTool:
     spec = TOOLS.get(name) or ToolSpec(name, "system", "OTHER", (name,))
     if project is not None:
@@ -137,7 +147,7 @@ def resolve(project: Project | None, name: str) -> ResolvedTool:
                 for cand in _candidate_names(exe):
                     p = directory / cand
                     if p.is_file():
-                        return _finish(ResolvedTool(name, p, env, prefix), project)
+                        return _finish(ResolvedTool(name, p, env, prefix or _owning_env(p)), project)
     shared_home = shared_root()
     if shared_home is not None:
         shared = shared_home / "bin"

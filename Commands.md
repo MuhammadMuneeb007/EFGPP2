@@ -102,6 +102,11 @@ Rscript -e 'for (p in c("bigsnpr","lassosum","PANPRSnext","CTSLEB","RapidoPGS","
 # - toolkit logs:            ./software/logs/<toolkit>.install.log
 # - bcftools source build:   ./software/opt/build/build.log
 # - never `mamba install` a tool into the efgpp env; `efgpp setup tools <tool> --force` instead
+# - VEP cache failed with "Could not find tabix": fixed in EFGPP (git pull), then
+#   efgpp resources install vep
+# - R packages ✗ (permutations, sim1000G, lassosum): fixed in EFGPP (git pull), then
+#   efgpp setup toolkit r          # installs only what is missing
+#   R package log: ./software/logs/r.install.log
 # - tools installed earlier into ./.efgpp are still found; delete .efgpp/bin and .efgpp/envs
 #   once `efgpp setup check` is all ✓
 ```
