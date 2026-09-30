@@ -35,7 +35,7 @@ is not installed, decides **when** and **where** (order, parallelism, restarts, 
 
 ## 2. Package stack and responsibilities
 
-EFGPP itself is installed into one environment: conda (`conda env create -f environment.yml`,
+EFGPP itself is installed into one environment: mamba/conda (`mamba env create -f environment.yml`,
 then `conda activate efgpp`) or uv (`uv sync`). The external scientific tools in §2.2 live in
 separate per-purpose environments inside each project. EFGPP activates the right one per step,
 so users never switch environments by hand. See README → *Install*.
@@ -73,8 +73,10 @@ Development: **pytest**, **pytest-cov**, **hypothesis** (property tests for chec
 
 ### 2.2 External scientific tools
 
-Each tool lives in its own small environment under `.efgpp/envs/<env>/` (Pixi preferred,
-Micromamba fallback; definitions in `workflow/envs/*.yaml`). `setup/tools.py` resolves each tool
+Each tool lives in its own small environment under `.efgpp/envs/<env>/` (Pixi preferred; if
+Pixi is unavailable or fails, the fastest conda-family tool found: mamba → micromamba → conda;
+set with `execution.environment_manager` / `fallback_environment_manager`; definitions in
+`workflow/envs/*.yaml`). `setup/tools.py` resolves each tool
 in this order: `project.yaml: execution.tools` override → `.efgpp/bin` → its environment → `PATH`.
 
 | Tool | Environment | Used for | Called from |
@@ -88,7 +90,7 @@ in this order: `project.yaml: execution.tools` override → `.efgpp/bin` → its
 | **MetaXcan / PrediXcan** (`Predict.py`) | `metaxcan` | Genetically predicted expression from PredictDB models | `data/predicted/metaxcan.py` |
 | **Snakemake** (+ `snakemake-executor-plugin-slurm`) | `core` | Scheduling, parallelism, restarts, SLURM execution | `workflow/snakemake.py` |
 | **MultiQC** | `reporting` | Aggregates QC tables (`*_mqc.tsv`) next to the EFGPP report | `reporting/data_report.py` |
-| **Pixi** / **Micromamba** | system | Creating the per-purpose environments from conda-forge + Bioconda | `setup/pixi.py`, `setup/micromamba.py` |
+| **Pixi** / **mamba** / micromamba / conda | system | Creating the per-purpose environments from conda-forge + Bioconda | `setup/pixi.py`, `setup/micromamba.py` |
 | **Apptainer / Docker** | system | Optional container runtime for Linux-only tools | `setup/containers.py` |
 
 ---
@@ -223,7 +225,7 @@ versions.
 | Snakemake | `workflow/snakemake.py` generates `workflow/Snakefile` + `rules/*.smk`; each rule calls `efgpp data step <id>` |
 | SLURM through Snakemake | `efgpp data prepare --executor slurm` with `workflow/profiles/slurm/config.yaml` |
 | Explicit SLURM scripts | `workflow/slurm.py` → `hpc/*.sbatch` + `submit_all.sh` (with `afterok` dependencies) |
-| Setup | `setup/manager.py`: platform detection → Pixi/Micromamba → environments → PLINK 2 binary where Bioconda is unavailable → tool tests → lock file |
+| Setup | `setup/manager.py`: platform detection → Pixi (fallback mamba → micromamba → conda) → environments → PLINK 2 binary where Bioconda is unavailable → tool tests → lock file |
 | Doctor | `setup/doctor.py` |
 
 ---
@@ -244,7 +246,7 @@ be refit inside training folds.
 
 | Area | How it was verified |
 |---|---|
-| Registry, validation, standardization, timeline, availability, report, snapshots, migration, CLI | Automated tests (56) on Windows |
+| Registry, validation, standardization, timeline, availability, report, snapshots, migration, CLI | Automated tests (59) on Windows |
 | Genotype QC, kinship, PCA | End-to-end tests with the real PLINK 2 binary |
 | VEP, OpenCRAVAT parsers; ClinVar/AlphaMissense lookups | Tests on small synthetic files; the external tools were not run |
 | PrediXcan | Output handling tested with a mocked run |

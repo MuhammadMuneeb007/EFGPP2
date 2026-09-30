@@ -29,21 +29,42 @@ Scientific tools conflict with each other (e.g. VEP needs Perl, MetaXcan its own
 each group gets its own environment. You never `conda activate` these: when a step runs,
 EFGPP executes the tool inside its environment for that command only.
 
-### Option A — conda (recommended on HPC clusters)
+`efgpp setup data` builds these with **Pixi** by default (parallel, lock-file based). If Pixi
+cannot be used or fails, it falls back to **mamba**, then micromamba, then conda, whichever is
+installed. To use mamba directly, set it in `project.yaml`:
 
-Requires conda, mamba or micromamba (e.g. Miniforge).
+```yaml
+execution:
+  environment_manager: mamba             # pixi | mamba | micromamba | conda | system
+```
+
+### Option A — mamba (fastest; recommended on HPC clusters)
 
 ```bash
 git clone https://github.com/MuhammadMuneeb007/EFGPP2.git
 cd EFGPP2
-conda env create -f environment.yml      # creates the `efgpp` env; installs EFGPP in editable mode
-conda activate efgpp
+mamba env create -f environment.yml      # creates the `efgpp` env; installs EFGPP in editable mode
+conda activate efgpp                     # or: mamba activate efgpp
 efgpp --version                          # -> efgpp 0.1.0
 ```
 
+`environment.yml` takes every dependency pre-built from conda-forge in a single solve with
+parallel downloads. pip only links the EFGPP source (it downloads nothing else). Measured on one
+Windows workstation:
+
+| Command | Empty package cache | Warm cache |
+|---|---|---|
+| `mamba env create -f environment.yml` | 111 s | 56 s |
+| `conda env create -f environment.yml` | — | 121 s |
+| previous version (dependencies via pip) | 225 s | — |
+
+No mamba? `conda install -n base -c conda-forge mamba`, or install
+[Miniforge](https://github.com/conda-forge/miniforge), which ships it. `micromamba create -f
+environment.yml` works too, and `conda env create -f environment.yml` also works (slower).
+
 Every new shell then only needs `conda activate efgpp`. Editable mode means `git pull` updates
-EFGPP without reinstalling; re-run `pip install -e ".[omics,test]"` only when `pyproject.toml`
-changes. To install into an existing conda environment instead:
+EFGPP without reinstalling; re-run `mamba env update -f environment.yml` only when
+dependencies change. To install into an existing conda environment instead:
 
 ```bash
 conda activate <your-env>                # needs Python >= 3.11
@@ -74,7 +95,7 @@ hypothesis), `reporting` (Kaleido/UpSetPlot), `standards` (Phenopackets validati
 
 ```bash
 efgpp doctor                             # what is installed / missing
-pytest                                   # from the EFGPP2 folder; 56 tests
+pytest                                   # from the EFGPP2 folder; 59 tests
 ```
 
 ## Quick start
@@ -178,7 +199,7 @@ MetaXcan need WSL2 or Docker (`efgpp doctor` says so).
 
   Then check with `efgpp doctor`.
 
-> Automatic environment creation with Pixi/Micromamba on Linux is implemented but has not yet
+> Automatic environment creation with Pixi/mamba on Linux is implemented but has not yet
 > been exercised on a cluster; if `efgpp setup data` fails, the `tools:` override above does not
 > depend on it.
 

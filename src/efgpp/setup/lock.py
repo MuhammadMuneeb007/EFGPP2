@@ -26,7 +26,7 @@ def _env_hash(project: Project, name: str) -> dict[str, Any] | None:
     installed = (d / ".pixi").exists() or (d / "conda-meta").exists()
     if not files:
         return None
-    return {"installed": installed, "manager": "pixi" if (d / "pixi.toml").exists() else "micromamba/spec",
+    return {"installed": installed, "manager": "pixi" if (d / "pixi.toml").exists() else "conda-family (workflow/envs spec)",
             "sha256": str(checksum_paths(files).value), "files": [p.name for p in files]}
 
 

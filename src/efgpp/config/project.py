@@ -61,8 +61,10 @@ class ExecutionConfig(StrictModel):
     # Snakemake is not installed (e.g. native Windows).
     engine: Literal["snakemake", "builtin", "auto"] = "auto"
     local_cores: int = Field(8, ge=1)
-    environment_manager: Literal["pixi", "micromamba", "system"] = "pixi"
-    fallback_environment_manager: Literal["micromamba", "system"] = "micromamba"
+    # pixi (default) | micromamba | mamba | conda | system (create nothing; use execution.tools/PATH)
+    environment_manager: Literal["pixi", "micromamba", "mamba", "conda", "system"] = "pixi"
+    # Used when pixi is unavailable or fails; falls through to any other conda-family tool found.
+    fallback_environment_manager: Literal["micromamba", "mamba", "conda", "system"] = "mamba"
     containers: ContainersConfig = ContainersConfig()
     hpc: HPCConfig = HPCConfig()
     # Explicit executable overrides, e.g. {"plink2": "/opt/plink2/plink2"}.

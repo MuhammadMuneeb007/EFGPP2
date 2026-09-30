@@ -108,12 +108,24 @@ def _create_env(project: Project, name: str, info: PlatformInfo, report: SetupRe
         report.add(f"environment {name}", "skipped", "no environment manager available")
         return False
     kind, exe = manager
-    proc = pixi.create_env(project, exe, name, info) if kind == "pixi" else micromamba.create_env(project, exe, name)  # type: ignore[arg-type]
+    proc = pixi.create_env(project, exe, name, info) if kind == "pixi" else micromamba.create_env(project, exe, name, kind)  # type: ignore[arg-type]
     if proc.returncode == 0:
         report.add(f"environment {name}", "installed", f"{kind}: .efgpp/envs/{name}")
         return True
+    if kind == "pixi":  # retry with the fastest conda-family tool before giving up
+        fallback = _conda_family(project)
+        if fallback is not None:
+            report.add(f"environment {name}", "warning", f"pixi failed; retrying with {fallback[0]}")
+            return _create_env(project, name, info, report, fallback)
     report.add(f"environment {name}", "failed", (proc.stderr or proc.stdout)[-400:])
     return False
+
+
+def _conda_family(project: Project) -> tuple[str, object] | None:
+    pref = project.config.execution.fallback_environment_manager
+    if pref == "system":
+        return None
+    return micromamba.find_conda_tool(project, pref)
 
 
 def setup_data(project: Project, *, components: set[str] | None = None, dry_run: bool = False,
@@ -139,15 +151,21 @@ def setup_data(project: Project, *, components: set[str] | None = None, dry_run:
 
     # 5: environment manager
     manager: tuple[str, object] | None = None
-    if info.bioconda_supported and project.config.execution.environment_manager != "system":
+    chosen = project.config.execution.environment_manager
+    if info.bioconda_supported and chosen == "pixi":
         try:
             say("bootstrapping pixi")
             manager = ("pixi", pixi.bootstrap(project, info))
             report.add("pixi", "ok", str(manager[1]))
         except Exception as exc:  # noqa: BLE001
-            mm = micromamba.find_micromamba(project)
-            manager = ("micromamba", mm) if mm else None
-            report.add("pixi", "warning", f"{exc}; fallback: {'micromamba' if mm else 'none'}")
+            manager = _conda_family(project)
+            report.add("pixi", "warning", f"{exc}; fallback: {manager[0] if manager else 'none'}")
+    elif info.bioconda_supported and chosen != "system":
+        manager = micromamba.find_conda_tool(project, chosen)
+        if manager is None or manager[0] != chosen:
+            report.add(chosen, "warning", f"{chosen} not found; using {manager[0] if manager else 'none'}")
+        else:
+            report.add(chosen, "ok", str(manager[1]))
     elif info.is_windows:
         report.add("bioconda", "warning", "Bioconda has no Windows builds; installing native binaries where available, "
                                          "use WSL2 or Docker for VEP, bcftools and MetaXcan")
