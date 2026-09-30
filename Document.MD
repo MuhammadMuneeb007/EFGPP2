@@ -293,3 +293,104 @@ be refit inside training folds.
 | Toolkits (`efgpp setup toolkit`) | Catalogue, R install/check script, repository wrappers unit-tested; all six conda environments solved for linux-64; not yet installed on Linux |
 | Direct installers (`efgpp setup tools`) | Build selection unit-tested; binary and Python-environment installs run on Windows; Linux source build, Apptainer VEP and MetaXcan environment not yet run |
 | ROH, ancestry, AlphaGenome API, Pixi environments on Linux/macOS | Implemented, not yet exercised |
+
+---
+
+## 11. Worked example: adding an existing PLINK cohort (migraine)
+
+The legacy EFGPP folder `/data/ascher02/uqmmune1/ANNOVAR/migraine` contains, per trait:
+
+| File | Content | EFGPP source |
+|---|---|---|
+| `migraine.bed` / `.bim` / `.fam` | genotypes (PLINK 1 binary fileset) | `genotype` (GENO001) |
+| `migraine.height` | phenotype: header `IID FID Height`, `1` = control, `2` = case | `phenotype` (PH001) |
+| `migraine.cov` | covariates: header `FID IID <covariates…>` | `covariates` (COV001) |
+| `migraine_QC.*` | the old pipeline's QC output | not needed; EFGPP runs its own QC |
+| `migraine*.txt`, `.gz`, `.PRSCS`, … | GWAS summary statistics and PRS results of the old pipeline | not participant data; see "Migration" below |
+
+The phenotype values are also column 6 of the `.fam`, but `.fam` has no header line, so the
+phenotype is read from `migraine.height` (same values, with a header).
+
+### Commands
+
+```bash
+conda activate efgpp
+cd /data/ascher02/uqmmune1/EFGPP/efgpp_projects/my_project     # the EFGPP project (efgpp init . done)
+
+M=/data/ascher02/uqmmune1/ANNOVAR/migraine
+
+# 0. Look at the headers once: the covariate names are needed in step 3
+head -3 $M/migraine.cov $M/migraine.height
+
+# 1. Genotype: give the PLINK prefix (no extension). It is referenced in place, never copied.
+efgpp data add genotype --path $M/migraine --format bed --build auto --mode reference
+
+# 2. Phenotype (binary, PLINK 1/2 coding is detected automatically: 2 = case, 1 = control)
+efgpp phenotype add --name migraine --path $M/migraine.height \
+    --id-column IID --value-column Height --type binary
+
+# 3. Covariates: list every column of migraine.cov except FID and IID (from step 0);
+#    columns holding codes such as sex go in --categorical
+efgpp data add covariates --path $M/migraine.cov --id-column IID \
+    --columns COV1 COV2 COV3 --categorical COV1
+
+# 4. Check, prepare, look at the result, freeze
+efgpp data validate
+efgpp data prepare
+efgpp data availability
+efgpp data report                      # reports/data/index.html
+efgpp data freeze --name migraine_v1
+```
+
+Replace `COV1 COV2 COV3` with the real column names printed in step 0 (for example
+`--columns Sex Age PC1 PC2 PC3 PC4 PC5 --categorical Sex`).
+
+### What EFGPP does with these files
+
+| Step | Result |
+|---|---|
+| `data add genotype` | `data.yaml` gets GENO001 pointing at `$M/migraine`; the three files are checksummed in place (storage mode `reference`) |
+| `phenotype add` | PH001 `migraine` (binary); the small table is copied to `data/observed/phenotype/PH001/` |
+| `data add covariates` | COV001; copied to `data/observed/covariates/COV001/`; no imputation or scaling |
+| `data validate` | duplicate IDs, invalid phenotype codes, missing covariate columns, genome build, and how many phenotype participants have genotype data |
+| `data prepare` | participant registry, standardized phenotype/covariates, PLINK 2 QC (`qc/genotype/GENO001/`, QC-passed PGEN in `data/derived/genotype_qc/GENO001/`), QC PCA, kinship, availability, report |
+
+### Genome build
+
+`--build auto` infers the build from the variant positions (and the reference FASTA once
+`efgpp resources install genome` has run). If the evidence is not conclusive, `efgpp data validate`
+stops with "genome build could not be determined confidently". Then set it explicitly — the
+UK Biobank genotypes of the original EFGPP study are GRCh37 (hg19) — either by re-adding with
+`--build GRCh37` or by editing `data.yaml`:
+
+```yaml
+observed:
+  genotype:
+    - id: GENO001
+      genome_build: GRCh37
+```
+
+### IDs
+
+The `.fam`, `.cov` and `.height` files are matched on `IID` (never by row order). If IIDs are
+only unique together with the FID, use `--sample-id-mode fid_iid` for the genotype and give the
+phenotype/covariate tables an ID column built as `FID_IID`.
+
+### Several traits
+
+Add each trait's phenotype as another `efgpp phenotype add` (PH002, PH003, …). Re-add a genotype
+only if it is a different fileset. `efgpp data availability` shows which participants have which
+phenotype.
+
+### Migration (the whole legacy folder at once)
+
+To register everything in the legacy folder in one go (genotype filesets, `.cov`, `.height`,
+GWAS summary statistics as reference resources, old PCA/PRS outputs for provenance only):
+
+```bash
+efgpp data migrate --source /data/ascher02/uqmmune1/ANNOVAR/migraine --profile legacy-efgpp --dry-run
+# review migration_plan.yaml (it also lists migraine_QC.*, migraine_5/, … — remove what you do not want)
+efgpp data migrate --source /data/ascher02/uqmmune1/ANNOVAR/migraine --profile legacy-efgpp --apply
+```
+
+The source folder is never modified.
