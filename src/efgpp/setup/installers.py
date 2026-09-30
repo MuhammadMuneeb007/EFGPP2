@@ -15,7 +15,7 @@ Methods, in the order they make sense per tool:
     Python venv       Snakemake (+ SLURM plugin), MultiQC, OpenCRAVAT      (uv, else venv+pip)
     source build      htslib (tabix, bgzip) + bcftools                     (needs gcc, make, zlib)
     source + venv     MetaXcan / PrediXcan                                 (GitHub archive + Python 3.11)
-    container         Ensembl VEP                                          (Apptainer/Singularity/Docker)
+    conda env         Ensembl VEP + Perl (Bioconda), else the official container (Apptainer/Docker)
 """
 
 from __future__ import annotations
@@ -324,6 +324,30 @@ def install_metaxcan(root: Path, info: PlatformInfo, say: Progress) -> InstallRe
 
 
 # ------------------------------------------------------------------- containers
+def install_vep(root: Path, info: PlatformInfo, say: Progress) -> InstallResult:
+    """Ensembl VEP from Bioconda (brings Perl and all Perl modules) in its own environment;
+    falls back to the official container when no conda-family tool can be used."""
+    if info.is_windows:
+        raise InstallError("run VEP through WSL2 on Windows")
+    from efgpp.setup.toolkit_installer import conda_tool, ensure_conda_env, env_bin, env_prefix
+
+    log = root / "toolkits" / "vep.install.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("", encoding="utf-8")
+    try:
+        tool = conda_tool(None, root, say)
+        ensure_conda_env(tool, env_prefix(root, "vep"), ["ensembl-vep", "perl", "htslib"], log, say)
+        for exe in ("vep", "vep_install", "perl"):
+            target = env_bin(root, "vep") / exe
+            if target.exists() and exe != "perl":
+                _expose(target, root / "bin")
+        return InstallResult("vep", f"Bioconda ensembl-vep via {tool[0]} (environment vep, includes Perl)",
+                             env_bin(root, "vep") / "vep")
+    except InstallError as exc:
+        say(f"conda install of VEP failed ({str(exc).splitlines()[0]}); trying the container")
+    return install_vep_container(root, info, say)
+
+
 def install_vep_container(root: Path, info: PlatformInfo, say: Progress) -> InstallResult:
     """Official Ensembl VEP image behind `vep` / `vep_install` wrapper scripts."""
     if info.is_windows:
@@ -370,7 +394,7 @@ INSTALLERS: dict[str, Callable[[Path, PlatformInfo, Progress], InstallResult]] =
     "multiqc": lambda r, i, s: install_python_tool("multiqc", r, i, s),
     "oc": lambda r, i, s: install_python_tool("oc", r, i, s),
     "predixcan": install_metaxcan,
-    "vep": install_vep_container,
+    "vep": install_vep,
 }
 
 # What `efgpp setup data --components ...` needs from each component.

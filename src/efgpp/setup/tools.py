@@ -21,7 +21,13 @@ from efgpp.project import Project
 
 
 def shared_root() -> Path:
-    """Per-user install root shared by all projects (`efgpp setup tools --shared`)."""
+    """Per-user install root shared by all projects (`--shared`).
+
+    Defaults to ~/.local/share/efgpp; set EFGPP_TOOLS_HOME to put it elsewhere (e.g. project
+    storage on a cluster where the home quota is small)."""
+    override = os.environ.get("EFGPP_TOOLS_HOME")
+    if override:
+        return Path(override).expanduser()
     return Path(platformdirs.user_data_dir("efgpp", appauthor=False))
 
 

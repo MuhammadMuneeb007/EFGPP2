@@ -108,6 +108,29 @@ called automatically by `efgpp setup data`) downloads it from its official sourc
 | **uv** | EFGPP env | Fast isolated Python environments for tools installed by `efgpp setup tools` | `setup/installers.py` |
 | **Apptainer / Docker** | system | Optional container runtime for Linux-only tools | `setup/containers.py` |
 
+### 2.3 Toolkits (`efgpp setup toolkit`, `setup/toolkits.py`, `setup/toolkit_installer.py`)
+
+Declarative specs installed into `<root>/envs/<env>` (conda), `<root>/opt/<name>` (repositories,
+downloads) and exposed as commands in `<root>/bin`; `<root>` is `<project>/.efgpp` or
+`$EFGPP_TOOLS_HOME` (default `~/.local/share/efgpp`) with `--shared`. `efgpp setup check`
+verifies commands, R packages (`requireNamespace`), pip packages and repositories.
+
+| Toolkit | Environment / source | Contents |
+|---|---|---|
+| `perl` | conda-forge | perl, perl-app-cpanminus |
+| `r` | conda-forge (R ≥ 4.3 + compilers), then CRAN / GitHub / Bioconductor via Rscript | bigsnpr (LDpred-2, SCT, lassosum2), bigstatsr, data.table, magrittr, remotes, devtools, optparse, pROC, glmnet, ranger, caret, SuperLearner, dplyr, Matrix, Rcpp, RcppArmadillo, R.utils, BiocManager, genio, ggplot2, xgboost, susieR, GenomicRanges; permutations, RapidoPGS, sim1000G, PANPRSnext (CRAN); lassosum, penRegSum, CTSLEB, R2BGLiMS, EBPRS (GitHub) |
+| `prs` | Bioconda | plink, plink2, gcta, gemma, vcftools, gsl, armadillo, compilers |
+| `prs` | official downloads | PRSice-2 2.3.5, GCTB 2.5.5, LDAK 6.3, BOLT-LMM 2.5 |
+| `prs` | GitHub archives + wrappers | PRScs, PRScsx, PRSbils, LDpred-funct, PolyFun (→ prs-python); LDSC, AnnoPred, PleioPred (→ prs-py27); DBSLMM.R (→ r); SDPR (bundled GSL/MKL on `LD_LIBRARY_PATH`), NPS (`make`), CTPR (unpacked), XP-BLUP, smtpred, MTG2 (source) |
+| `prs-python` | conda-forge + PyPI | Python 3.10, numpy<2, scipy, pandas, h5py, scikit-learn, statsmodels, openjdk 11; ldpred, viprs, magenpy, pandas-plink, plinkio, pyliftover, pgenlib, hail |
+| `prs-py27` | conda-forge + PyPI | Python 2.7, numpy, scipy, pandas, bitarray, h5py, scikit-learn, statsmodels; plinkio |
+| `simulation` | conda-forge | Python 3.11, simuPOP, msprime, tskit, stdpopsim |
+
+Conda installs use mamba > micromamba > conda (micromamba is downloaded when none exists) with
+`--override-channels -c conda-forge -c bioconda`. All six environments were solved for
+`linux-64` (dry run). Manual step: DBSLMM's `dbslmm` executable (Google Drive only).
+Running these methods belongs to the Representation layer; the Data layer only installs them.
+
 ---
 
 ## 3. Lifecycle: operation → package
@@ -261,10 +284,11 @@ be refit inside training folds.
 
 | Area | How it was verified |
 |---|---|
-| Registry, validation, standardization, timeline, availability, report, snapshots, migration, CLI | Automated tests (65) on Windows |
+| Registry, validation, standardization, timeline, availability, report, snapshots, migration, CLI | Automated tests (70) on Windows |
 | Genotype QC, kinship, PCA | End-to-end tests with the real PLINK 2 binary |
 | VEP, OpenCRAVAT parsers; ClinVar/AlphaMissense lookups | Tests on small synthetic files; the external tools were not run |
 | PrediXcan | Output handling tested with a mocked run |
 | Snakefile and SLURM generation | Tested; not executed |
+| Toolkits (`efgpp setup toolkit`) | Catalogue, R install/check script, repository wrappers unit-tested; all six conda environments solved for linux-64; not yet installed on Linux |
 | Direct installers (`efgpp setup tools`) | Build selection unit-tested; binary and Python-environment installs run on Windows; Linux source build, Apptainer VEP and MetaXcan environment not yet run |
 | ROH, ancestry, AlphaGenome API, Pixi environments on Linux/macOS | Implemented, not yet exercised |

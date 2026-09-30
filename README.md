@@ -91,11 +91,39 @@ folder), or install a user-wide command with `uv tool install --editable /path/t
 hypothesis), `reporting` (Kaleido/UpSetPlot), `standards` (Phenopackets validation, GA4GH VRS),
 `alphagenome`. Example: `pip install -e ".[omics,test,reporting]"`.
 
+### Toolkits: Perl, R, PRS tools, simulation
+
+Beyond the data-layer tools, EFGPP installs complete toolkits for the software used around it
+(the requirements are taken from PRSTools):
+
+```bash
+export EFGPP_TOOLS_HOME=/path/on/project/storage/efgpp_tools   # optional; default ~/.local/share/efgpp
+efgpp setup toolkit --list          # contents of every toolkit
+efgpp setup toolkit all --shared    # perl, r, prs-python, prs-py27, prs, simulation
+efgpp setup check                   # ✓/✗ for every tool, R package and repository
+```
+
+| Toolkit | Contents | How |
+|---|---|---|
+| `perl` | Perl, cpanminus | conda-forge |
+| `r` | R ≥ 4.3; bigsnpr (**LDpred-2**, SCT, lassosum2), bigstatsr, data.table, glmnet, caret, SuperLearner, susieR, GenomicRanges, genio, …; lassosum, PANPRSnext, CTSLEB, RapidoPGS, EBPRS, R2BGLiMS (JAMPred), penRegSum (tlpSum), sim1000G, permutations | conda-forge, then CRAN / GitHub / Bioconductor inside the environment (compilers included) |
+| `prs` | PLINK 1.9/2, GCTA, GEMMA, vcftools (conda); **GCTB 2.5.5, PRSice-2, LDAK 6.3, BOLT-LMM 2.5** (official downloads); PRScs, PRScsx, PRSbils, LDpred-funct, PolyFun, SDPR, DBSLMM, CTPR, NPS, XP-BLUP, smtpred, LDSC, AnnoPred, PleioPred, MTG2 (GitHub, with wrapper commands in `bin/`) | Bioconda + official downloads + GitHub archives |
+| `prs-python` | Python 3.10: LDpred, VIPRS, magenpy, pandas-plink, pgenlib, **Hail** (+ Java 11) | conda-forge + PyPI |
+| `prs-py27` | Python 2.7 for LDSC, AnnoPred, PleioPred | conda-forge |
+| `simulation` | **simuPOP**, msprime, tskit, stdpopsim (R: sim1000G in `r`) | conda-forge |
+
+Every environment was solved for `linux-64` against conda-forge + Bioconda only (EFGPP passes
+`--override-channels`, so Anaconda's commercial `defaults` channel is never used). If no
+mamba/micromamba/conda is installed, EFGPP downloads micromamba itself. Bioconda's `bolt-lmm`
+is uninstallable (it needs an `nlopt` release that does not exist), so BOLT-LMM comes from the
+official tarball. DBSLMM's `dbslmm` executable is only on Google Drive and must be downloaded by
+hand into `<install root>/opt/DBSLMM/software/dbslmm`.
+
 ### Check the installation
 
 ```bash
 efgpp doctor                             # what is installed / missing
-pytest                                   # from the EFGPP2 folder; 65 tests
+pytest                                   # from the EFGPP2 folder; 70 tests
 ```
 
 ### If a tool cannot be installed with mamba/conda
