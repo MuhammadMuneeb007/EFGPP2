@@ -125,7 +125,10 @@ def harmonize_genotype(project: Project, source_id: str, *, step_id: str | None 
     with Registry.open(project) as reg:
         store = ArtifactStore(reg)
         lifted = store.get(new_id)
-        variants = VARIANT_SCHEMA.validate(variant_table(resolve_fileset(Path(lifted.path), "pgen"), target.value))
+        from efgpp.data.genotype.qc import placed_variants
+
+        variants, _ = placed_variants(variant_table(resolve_fileset(Path(lifted.path), "pgen"), target.value))
+        variants = VARIANT_SCHEMA.validate(variants)
         out = write_parquet(variants, project.artifact_dir(Origin.DERIVED, Modality.VARIANTS, source_id)
                             / f"{source_id}_variants.parquet", project.config.storage.compression)
         store.register_replacing(Artifact(

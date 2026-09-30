@@ -94,3 +94,25 @@ def test_phenotype_independence_and_snapshot(project: Project, cohort_dir: Path,
     assert snap.exists() and (p.path("snapshots", "derived_v1") / "molecular_models.parquet").exists()
     text = snap.read_text(encoding="utf-8")
     assert "consequence_burden" in text and "gene_burden" in text and "predicted" in text
+
+
+def test_array_with_position_zero_probes_standardizes(project: Project, tmp_path: Path) -> None:
+    """Arrays carry unplaced control probes at position 0; they must not stop standardization."""
+    from efgpp.config.data import GenotypeSource
+    from efgpp.constants import StorageMode
+    from tests.unit._genotypes import write_bed
+
+    samples = [f"S{i}" for i in range(20)]
+    variants = [("0", "probe1", 0, "A", "G"), ("0", "probe2", 0, "C", "T")] + \
+               [("1", f"rs{i}", 1000 + i * 10, "G", "A") for i in range(30)]
+    counts = [[(i + j) % 3 for j in range(20)] for i in range(len(variants))]
+    prefix = write_bed(tmp_path / "arr" / "array", samples, variants, counts)
+    project.data.observed.genotype.append(GenotypeSource(id="GENO001", path=str(prefix), format="bed",
+                                                         genome_build="GRCh38", mode=StorageMode.REFERENCE))
+    project.save_data_config()
+    status = {o.step_id: o.status for o in prepare(Project.load(project.root))}
+    assert status["standardize.GENO001"] == "done"
+    with Registry.open(project) as reg:
+        n = reg.scalar("SELECT feature_count FROM artifacts WHERE artifact_type = 'variant_table' "
+                       "AND status <> 'SUPERSEDED'")
+    assert n == 30  # the two position-0 probes are left out of the variant table only

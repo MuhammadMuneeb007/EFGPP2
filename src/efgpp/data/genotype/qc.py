@@ -375,6 +375,13 @@ def register_qc_outputs(project: Project, source_id: str, out: QCRunOutputs, ste
     return ids
 
 
+def placed_variants(variants: pl.DataFrame) -> tuple[pl.DataFrame, int]:
+    """Drop unplaced variants (position 0, e.g. array control probes) from a variant table.
+    They stay in the genotype files; they just cannot be annotated, lifted or keyed."""
+    keep = variants.filter(pl.col("position").fill_null(0) >= 1)
+    return keep, variants.height - keep.height
+
+
 def variant_table(fs: GenotypeFileset, build: str | None, limit: int | None = None) -> pl.DataFrame:
     """Standardized variant table (section 27 keys; VRS ids are filled by annotation)."""
     v = read_variants(fs, limit=limit)

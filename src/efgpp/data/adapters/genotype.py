@@ -218,6 +218,9 @@ class GenotypeAdapter(DataAdapter):
             variants = variant_table(fs, build_value)
         except NotImplementedError:
             return src
+        from efgpp.data.genotype.qc import placed_variants
+
+        variants, unplaced = placed_variants(variants)  # position-0 probes: warned at validation
         variants = VARIANT_SCHEMA.validate(variants)
         out_dir = self.project.artifact_dir(Origin.DERIVED, Modality.VARIANTS, s.id)
         out = write_parquet(variants, out_dir / f"{s.id}_variants.parquet", self.project.config.storage.compression)

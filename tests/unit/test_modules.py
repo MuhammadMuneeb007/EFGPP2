@@ -162,3 +162,27 @@ def test_data_predict_switch(project: Project, run_cli, monkeypatch) -> None:  #
     run_cli("data", "variants", "enable", "--spliceai")
     pv = Project.load(project.root).data.participant_variants
     assert pv.enabled and pv.carrier_only and pv.annotations.spliceai
+
+
+def test_adding_the_same_file_twice_changes_nothing(project: Project, tmp_path: Path, run_cli, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    cov = tmp_path / "c.cov"
+    cov.write_text("FID IID Sex Age\nS1 S1 1 50\nS2 S2 2 61\n", encoding="utf-8")
+    monkeypatch.chdir(project.root)
+    run_cli("data", "add", "covariates", "--path", str(cov))
+    out = run_cli("data", "add", "covariates", "--path", str(cov)).output
+    assert "already added as COV001" in out
+    assert [c.id for c in Project.load(project.root).data.observed.covariates] == ["COV001"]
+
+
+def test_unplaced_probes_left_out_of_variant_table() -> None:
+    import polars as pl
+
+    from efgpp.data.genotype.qc import placed_variants
+    from efgpp.data.schemas.artifact import VARIANT_SCHEMA
+
+    v = pl.DataFrame({"genome_build": ["GRCh37"] * 3, "chromosome": ["0", "1", "1"], "position": [0, 0, 100],
+                      "reference": ["A", "C", "G"], "alternate": ["G", "T", "A"], "variant_id": ["a", "b", "c"],
+                      "rsid": [None, None, None], "vrs_id": [None, None, None]},
+                     schema_overrides={"rsid": pl.Utf8, "vrs_id": pl.Utf8})
+    kept, dropped = placed_variants(v)
+    assert dropped == 2 and VARIANT_SCHEMA.validate(kept).get_column("position").to_list() == [100]

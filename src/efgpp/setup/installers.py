@@ -88,7 +88,9 @@ CONDA_TOOLS: dict[str, tuple[str, list[str], list[str], list[str]]] = {
     # TensorFlow < 2.16 keeps Keras 2, which loads SpliceAI's bundled .h5 models
     "spliceai": ("spliceai", ["python=3.10", "spliceai", "tensorflow>=2.10,<2.16", "pip"], [], ["spliceai"]),
     # GWASLab pins pysam/matplotlib/pandas versions: it must never share the efgpp environment.
-    "gwaslab": ("gwaslab", ["python=3.11", "gwaslab", "pyliftover", "pyarrow"], [], ["python:gwaslab-python"]),
+    # GWASLab >= 4 lifts over with the separate `sumstats-liftover` package (not a declared dependency)
+    "gwaslab": ("gwaslab", ["python=3.11", "gwaslab", "pyliftover", "pyarrow", "pip"], ["sumstats-liftover"],
+                ["python:gwaslab-python"]),
 }
 
 

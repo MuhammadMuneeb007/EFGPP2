@@ -30,6 +30,26 @@ GWASLAB_NAMES = {
 }
 
 
+def _pyliftover(ss, chain: str) -> None:  # type: ignore[no-untyped-def]
+    """Lift CHR/POS with pyliftover (same chain file). Variants that do not map to the same
+    chromosome on the forward strand are removed, as GWASLab does."""
+    from pyliftover import LiftOver
+
+    lo = LiftOver(chain)
+    data = ss.data
+    ucsc = {"23": "X", "24": "Y", "25": "X", "26": "M", "MT": "M"}
+    new_pos, keep = [], []
+    for c, p in zip(data["CHR"].astype(str), data["POS"], strict=True):
+        cc = ucsc.get(c, c)
+        hits = lo.convert_coordinate(f"chr{cc}", int(p) - 1)
+        ok = bool(hits) and hits[0][0] == f"chr{cc}" and hits[0][2] == "+"
+        keep.append(ok)
+        new_pos.append(int(hits[0][1]) + 1 if ok else 0)
+    data = data.assign(POS=new_pos)[keep].copy()
+    data["POS"] = data["POS"].astype("Int64")
+    ss.data = data
+
+
 def main(job_path: str) -> int:
     job = json.loads(Path(job_path).read_text(encoding="utf-8"))
     import importlib.metadata as md
@@ -67,14 +87,21 @@ def main(job_path: str) -> int:
                          "set `build` for this GWAS in data.yaml")
 
     target = job["target"]
+    report["build_final"] = str(ss.build)
     if str(ss.build) != target:
         chain = job["chains"][f"{ss.build}->{target}"]
-        ss.liftover(from_build=str(ss.build), to_build=target, chain_path=chain)
+        try:
+            ss.liftover(from_build=str(ss.build), to_build=target, chain_path=chain)
+            report["liftover_engine"] = "gwaslab"
+            report["build_final"] = str(ss.build)
+        except ImportError as exc:  # GWASLab without its optional `sumstats-liftover` package
+            report["liftover_engine"] = f"pyliftover (GWASLab liftover unavailable: {exc})"
+            _pyliftover(ss, chain)
+            report["build_final"] = target
         report["lifted"] = f"{report['build_detected']}->{target}"
         report["rows_after_liftover"] = int(len(ss.data))
     else:
         report["lifted"] = None
-    report["build_final"] = str(ss.build)
 
     data = ss.data
     report["rows_final"] = int(len(data))
