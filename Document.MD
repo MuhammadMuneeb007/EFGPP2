@@ -22,7 +22,7 @@ Paths such as `data/genotype/qc.py` are relative to `src/efgpp/`.
              │                        │                        lookups, MetaXcan)
              └──────────────┬─────────┴──────────────┬──────────────────┘
                             ▼                        ▼
-               Registry (DuckDB + Parquet)    Provenance logs (.efgpp/logs)
+               Registry (DuckDB + Parquet)    Provenance logs (logs/)      
                             │
                             ▼
       Availability ─► Report (Plotly + Jinja2 [+ MultiQC]) ─► DataSnapshot (YAML + Parquet)
@@ -73,12 +73,13 @@ Development: **pytest**, **pytest-cov**, **hypothesis** (property tests for chec
 
 ### 2.2 External scientific tools
 
-Each tool lives in its own small environment under `.efgpp/envs/<env>/` (Pixi preferred; if
+Each tool lives in its own conda environment under `software/envs/<tool>/` in the project (Pixi preferred; if
 Pixi is unavailable or fails, the fastest conda-family tool found: mamba → micromamba → conda;
 set with `execution.environment_manager` / `fallback_environment_manager`; definitions in
 `workflow/envs/*.yaml`). `setup/tools.py` resolves each tool
-in this order: `project.yaml: execution.tools` override → `.efgpp/bin` → its environment →
-`~/.local/share/efgpp/bin` (shared) → `PATH`.
+in this order: `project.yaml: execution.tools` override → `software/bin` → its environment →
+legacy `.efgpp/bin` → `$EFGPP_TOOLS_HOME/bin` (only when set) → `PATH`. Nothing is installed in
+the home directory or in the `efgpp` environment.
 
 When a tool cannot be obtained from conda, `setup/installers.py` (`efgpp setup tools`, also
 called automatically by `efgpp setup data`) downloads it from its official source:
@@ -111,8 +112,8 @@ called automatically by `efgpp setup data`) downloads it from its official sourc
 ### 2.3 Toolkits (`efgpp setup toolkit`, `setup/toolkits.py`, `setup/toolkit_installer.py`)
 
 Declarative specs installed into `<root>/envs/<env>` (conda), `<root>/opt/<name>` (repositories,
-downloads) and exposed as commands in `<root>/bin`; `<root>` is `<project>/.efgpp` or
-`$EFGPP_TOOLS_HOME` (default `~/.local/share/efgpp`) with `--shared`. `efgpp setup check`
+downloads) and exposed as commands in `<root>/bin`; `<root>` is `<project>/software` (or
+`$EFGPP_TOOLS_HOME` with `--shared`, only when set). `efgpp setup check`
 verifies commands, R packages (`requireNamespace`), pip packages and repositories.
 
 | Toolkit | Environment / source | Contents |
@@ -225,9 +226,9 @@ with `SUPERSEDED` for replaced versions. Superseded artifacts are never deleted.
 
 Each external command run through `data/provenance.py` (subprocess + psutil) writes:
 
-- `.efgpp/logs/RUNxxxxxx.jsonl`: structured start/end events
-- `.efgpp/logs/RUNxxxxxx.log`: combined stdout/stderr
-- `.efgpp/logs/RUNxxxxxx.yaml`: the run record (tool, version, command, inputs, outputs, exit code, resources)
+- `logs/RUNxxxxxx.jsonl`: structured start/end events
+- `logs/RUNxxxxxx.log`: combined stdout/stderr
+- `logs/RUNxxxxxx.yaml`: the run record (tool, version, command, inputs, outputs, exit code, resources)
 - a `tool_runs` row in the registry
 
 ---
@@ -284,7 +285,7 @@ be refit inside training folds.
 
 | Area | How it was verified |
 |---|---|
-| Registry, validation, standardization, timeline, availability, report, snapshots, migration, CLI | Automated tests (70) on Windows |
+| Registry, validation, standardization, timeline, availability, report, snapshots, migration, CLI | Automated tests (72) on Windows |
 | Genotype QC, kinship, PCA | End-to-end tests with the real PLINK 2 binary |
 | VEP, OpenCRAVAT parsers; ClinVar/AlphaMissense lookups | Tests on small synthetic files; the external tools were not run |
 | PrediXcan | Output handling tested with a mocked run |

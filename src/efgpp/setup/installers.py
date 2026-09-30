@@ -1,21 +1,22 @@
-"""Direct installers: fetch scientific tools from their official sources when conda cannot.
+"""Installing the data-layer tools into the project, one conda environment per tool.
 
-Every tool is placed under an install root:
+Everything lands in the project directory you work in, in plain sight:
 
-    <project>/.efgpp/          (default: travels with the project)
-    ~/.local/share/efgpp/      (--shared: one copy reused by every project of this user)
+    <project>/software/bin/            commands (links to each tool's environment / wrappers)
+    <project>/software/envs/<tool>/    one conda environment per tool (never the efgpp env)
+    <project>/software/opt/<tool>/     sources, unpacked downloads, container images
+    <project>/software/downloads/      downloaded archives
 
-    <root>/bin/                 executables / wrappers (searched before PATH)
-    <root>/opt/<tool>/          unpacked sources and builds
-    <root>/envs/<env>/          isolated Python environments (Snakemake, MultiQC, ...)
-    <root>/containers/          container images (VEP)
+(`--shared` installs into $EFGPP_TOOLS_HOME instead, only when you set it.)
 
-Methods, in the order they make sense per tool:
-    official binary   PLINK 2, PLINK 1.9, FlashPCA2
+For each tool EFGPP first creates its own conda environment from conda-forge + Bioconda
+(mamba > micromamba > conda; micromamba is downloaded when none is installed). Only if that
+fails does it fall back to the official source:
+    official binary   PLINK 2, PLINK 1.9, FlashPCA2 (FlashPCA2 is not in conda at all)
     Python venv       Snakemake (+ SLURM plugin), MultiQC, OpenCRAVAT      (uv, else venv+pip)
     source build      htslib (tabix, bgzip) + bcftools                     (needs gcc, make, zlib)
     source + venv     MetaXcan / PrediXcan                                 (GitHub archive + Python 3.11)
-    conda env         Ensembl VEP + Perl (Bioconda), else the official container (Apptainer/Docker)
+    container         Ensembl VEP                                          (Apptainer/Singularity/Docker)
 """
 
 from __future__ import annotations
@@ -70,10 +71,34 @@ class InstallResult:
     location: Path
 
 
+# tool: (environment, conda packages, pip packages, commands exposed in software/bin)
+CONDA_TOOLS: dict[str, tuple[str, list[str], list[str], list[str]]] = {
+    "plink2": ("plink2", ["plink2"], [], ["plink2"]),
+    "plink": ("plink", ["plink"], [], ["plink"]),
+    "bcftools": ("bcftools", ["bcftools", "htslib"], [], ["bcftools", "tabix", "bgzip"]),
+    "tabix": ("bcftools", ["bcftools", "htslib"], [], ["bcftools", "tabix", "bgzip"]),
+    "bgzip": ("bcftools", ["bcftools", "htslib"], [], ["bcftools", "tabix", "bgzip"]),
+    "snakemake": ("snakemake", ["python>=3.11", "snakemake-minimal", "snakemake-executor-plugin-slurm"], [],
+                  ["snakemake"]),
+    "multiqc": ("multiqc", ["multiqc"], [], ["multiqc"]),
+    "oc": ("opencravat", ["open-cravat"], [], ["oc"]),
+    "vep": ("vep", ["ensembl-vep", "perl", "htslib"], [], ["vep", "vep_install"]),
+    "predixcan": ("predixcan", ["python=3.10", "numpy<2", "scipy", "pandas<2.3", "statsmodels", "h5py", "cyvcf2",
+                                "pip"], ["bgen", "pyliftover"], []),
+}
+
+
 def install_root(project: Project | None, shared: bool) -> Path:
-    if shared or project is None:
-        return shared_root()
-    return project.path(".efgpp")
+    """<project>/software by default (./software outside a project); $EFGPP_TOOLS_HOME with --shared."""
+    if shared:
+        root = shared_root()
+        if root is None:
+            raise InstallError("--shared needs EFGPP_TOOLS_HOME (e.g. export EFGPP_TOOLS_HOME=$PWD/software); "
+                               "without --shared everything installs into the project")
+        return root
+    if project is not None:
+        return project.software_dir
+    return Path.cwd() / "software"
 
 
 def _exe(name: str, info: PlatformInfo) -> str:
@@ -216,8 +241,7 @@ def install_htslib_bcftools(root: Path, info: PlatformInfo, say: Progress) -> In
     if info.is_windows:
         raise InstallError("building bcftools needs a Unix toolchain; use WSL2 or Docker on Windows")
     if shutil.which("make") is None or not (shutil.which("cc") or shutil.which("gcc")):
-        raise InstallError("building bcftools needs a C compiler and make (e.g. `module load gcc`, or "
-                           "`mamba install -c bioconda bcftools`)")
+        raise InstallError("building bcftools from source needs a C compiler and make (e.g. `module load gcc`)")
     prefix = root / "opt" / "samtools"
     build = root / "opt" / "build"
     build.mkdir(parents=True, exist_ok=True)
@@ -296,11 +320,16 @@ def install_python_tool(tool: str, root: Path, info: PlatformInfo, say: Progress
 
 
 def install_metaxcan(root: Path, info: PlatformInfo, say: Progress) -> InstallResult:
-    """MetaXcan source (GitHub archive, no git needed) + its own Python 3.11 environment."""
-    prefix = root / "envs" / "metaxcan"
-    if (prefix / "conda-meta").exists():
-        prefix = root / "envs" / "metaxcan-venv"
+    """Fallback: MetaXcan source (GitHub archive, no git needed) + its own Python 3.11 venv."""
+    prefix = root / "envs" / "predixcan-venv"
     create_venv(prefix, METAXCAN_REQUIREMENTS, say, python="3.11")
+    py = prefix / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    wrapper = metaxcan_source(root, py, info, say)
+    return InstallResult("predixcan", "MetaXcan source + Python 3.11 environment", wrapper)
+
+
+def metaxcan_source(root: Path, py: Path, info: PlatformInfo, say: Progress) -> Path:
+    """Download MetaXcan and write the `predixcan` wrapper that runs Predict.py with `py`."""
     say("downloading MetaXcan source")
     archive = root / "downloads" / "MetaXcan-master.zip"
     download(METAXCAN_ARCHIVE, archive)
@@ -310,7 +339,6 @@ def install_metaxcan(root: Path, info: PlatformInfo, say: Progress) -> InstallRe
         z.extractall(root / "opt")
     (root / "opt" / "MetaXcan-master").rename(src)
     script = src / "software" / "Predict.py"
-    py = prefix / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     if info.is_windows:
         wrapper = root / "bin" / "predixcan.bat"
         wrapper.parent.mkdir(parents=True, exist_ok=True)
@@ -320,34 +348,10 @@ def install_metaxcan(root: Path, info: PlatformInfo, say: Progress) -> InstallRe
         wrapper.parent.mkdir(parents=True, exist_ok=True)
         wrapper.write_text(f'#!/bin/sh\nexec "{py}" "{script}" "$@"\n', encoding="utf-8")
         _make_executable(wrapper)
-    return InstallResult("predixcan", "MetaXcan source + Python 3.11 environment", wrapper)
+    return wrapper
 
 
 # ------------------------------------------------------------------- containers
-def install_vep(root: Path, info: PlatformInfo, say: Progress) -> InstallResult:
-    """Ensembl VEP from Bioconda (brings Perl and all Perl modules) in its own environment;
-    falls back to the official container when no conda-family tool can be used."""
-    if info.is_windows:
-        raise InstallError("run VEP through WSL2 on Windows")
-    from efgpp.setup.toolkit_installer import conda_tool, ensure_conda_env, env_bin, env_prefix
-
-    log = root / "toolkits" / "vep.install.log"
-    log.parent.mkdir(parents=True, exist_ok=True)
-    log.write_text("", encoding="utf-8")
-    try:
-        tool = conda_tool(None, root, say)
-        ensure_conda_env(tool, env_prefix(root, "vep"), ["ensembl-vep", "perl", "htslib"], log, say)
-        for exe in ("vep", "vep_install", "perl"):
-            target = env_bin(root, "vep") / exe
-            if target.exists() and exe != "perl":
-                _expose(target, root / "bin")
-        return InstallResult("vep", f"Bioconda ensembl-vep via {tool[0]} (environment vep, includes Perl)",
-                             env_bin(root, "vep") / "vep")
-    except InstallError as exc:
-        say(f"conda install of VEP failed ({str(exc).splitlines()[0]}); trying the container")
-    return install_vep_container(root, info, say)
-
-
 def install_vep_container(root: Path, info: PlatformInfo, say: Progress) -> InstallResult:
     """Official Ensembl VEP image behind `vep` / `vep_install` wrapper scripts."""
     if info.is_windows:
@@ -355,9 +359,9 @@ def install_vep_container(root: Path, info: PlatformInfo, say: Progress) -> Inst
     runtime = next((r for r in ("apptainer", "singularity") if shutil.which(r)), None)
     bin_dir = root / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
-    project_root = root.parent if root.name == ".efgpp" else Path.home()
+    project_root = root.parent if root.name == "software" else Path.cwd()
     if runtime:
-        sif = root / "containers" / "ensembl-vep.sif"
+        sif = root / "opt" / "containers" / "ensembl-vep.sif"
         sif.parent.mkdir(parents=True, exist_ok=True)
         if not sif.exists():
             say(f"pulling {VEP_IMAGE} with {runtime} (large image; one time)")
@@ -373,8 +377,9 @@ def install_vep_container(root: Path, info: PlatformInfo, say: Progress) -> Inst
                f'-v "$PWD:$PWD" -w "$PWD" {VEP_IMAGE.removeprefix("docker://")}')
         method = "docker image ensemblorg/ensembl-vep"
     else:
-        raise InstallError("VEP needs Apptainer/Singularity or Docker (its Perl dependencies are not "
-                           "installable reliably otherwise); or `mamba install -c bioconda ensembl-vep`")
+        raise InstallError("VEP could not be installed in its own conda environment and no container runtime "
+                           "(Apptainer/Singularity/Docker) is available. Do NOT install ensembl-vep into the efgpp "
+                           "environment; see software/logs/vep.install.log")
     for name, command in (("vep", "vep"), ("vep_install", "INSTALL.pl")):
         wrapper = bin_dir / name
         wrapper.write_text(f'#!/bin/sh\n{run} {command} "$@"\n', encoding="utf-8")
@@ -394,7 +399,7 @@ INSTALLERS: dict[str, Callable[[Path, PlatformInfo, Progress], InstallResult]] =
     "multiqc": lambda r, i, s: install_python_tool("multiqc", r, i, s),
     "oc": lambda r, i, s: install_python_tool("oc", r, i, s),
     "predixcan": install_metaxcan,
-    "vep": install_vep,
+    "vep": install_vep_container,
 }
 
 # What `efgpp setup data --components ...` needs from each component.
@@ -417,6 +422,7 @@ def install_tools(project: Project | None, tools: list[str], *, shared: bool = F
     root = install_root(project, shared)
     rows: list[tuple[str, str, str]] = []
     done: set[Callable[..., InstallResult]] = set()
+    done_envs: set[str] = set()
     for tool in dict.fromkeys(tools):
         if tool not in INSTALLERS:
             rows.append((tool, "failed", f"no installer; choose from {', '.join(sorted(INSTALLERS))}"))
@@ -424,6 +430,19 @@ def install_tools(project: Project | None, tools: list[str], *, shared: bool = F
         if not force and available(project, tool):
             rows.append((tool, "ok", "already available"))
             continue
+        if tool in CONDA_TOOLS and not info.is_windows:
+            env = CONDA_TOOLS[tool][0]
+            if env in done_envs:
+                rows.append((tool, "installed", f"with the {env} environment"))
+                continue
+            try:
+                say(f"installing {tool} into its own conda environment software/envs/{env}")
+                res = install_conda_tool(tool, root, info, say)
+                done_envs.add(env)
+                rows.append((tool, "installed", f"{res.method} -> {res.location}"))
+                continue
+            except Exception as exc:  # noqa: BLE001 - fall back to the official download
+                say(f"conda install of {tool} failed ({str(exc).splitlines()[0]}); using the official source")
         fn = INSTALLERS[tool]
         if fn in done:  # e.g. tabix/bgzip come with the bcftools build
             rows.append((tool, "installed", "with bcftools"))
@@ -438,10 +457,34 @@ def install_tools(project: Project | None, tools: list[str], *, shared: bool = F
     return rows
 
 
+def install_conda_tool(tool: str, root: Path, info: PlatformInfo, say: Progress) -> InstallResult:
+    """Create the tool's own conda environment (software/envs/<env>) and expose its commands."""
+    from efgpp.setup.toolkit_installer import conda_tool, ensure_conda_env, env_bin, env_prefix
+
+    env, packages, pip, commands = CONDA_TOOLS[tool]
+    log = root / "logs" / f"{env}.install.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("", encoding="utf-8")
+    manager = conda_tool(None, root, say)
+    ensure_conda_env(manager, env_prefix(root, env), packages, log, say)
+    py = env_bin(root, env) / "python"
+    for pkg in pip:
+        _run([str(py), "-m", "pip", "install", "--no-input", pkg], root, log)
+    for command in commands:
+        target = env_bin(root, env) / command
+        if not target.exists():
+            raise InstallError(f"{command} missing from the {env} environment (log: {log})")
+        _expose(target, root / "bin")
+    location = env_prefix(root, env)
+    if tool == "predixcan":
+        location = metaxcan_source(root, py, info, say)
+    return InstallResult(tool, f"conda environment software/envs/{env} via {manager[0]}", location)
+
+
 def path_exports(project: Project | None) -> list[Path]:
     """Directories to put on PATH to call EFGPP-installed tools directly from a shell."""
-    dirs = []
-    if project is not None:
-        dirs.append(project.bin_dir)
-    dirs.append(shared_root() / "bin")
+    dirs = [project.bin_dir, *(d / "bin" for d in project.legacy_software_dirs)] if project else [Path.cwd() / "software" / "bin"]
+    shared = shared_root()
+    if shared is not None:
+        dirs.append(shared / "bin")
     return [d for d in dirs if d.exists()]

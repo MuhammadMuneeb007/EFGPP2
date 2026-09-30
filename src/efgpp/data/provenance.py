@@ -1,9 +1,9 @@
 """Provenance: every external command produces a run record and structured logs.
 
 For each run EFGPP writes
-    .efgpp/logs/RUN000123.jsonl   structured events (one JSON object per line)
-    .efgpp/logs/RUN000123.log     human-readable combined stdout/stderr
-    .efgpp/logs/RUN000123.yaml    the run record
+    logs/RUN000123.jsonl   structured events (one JSON object per line)
+    logs/RUN000123.log     human-readable combined stdout/stderr
+    logs/RUN000123.yaml    the run record
 and a row in the registry's tool_runs table.
 
 The registry lock is *not* held while a tool runs, so parallel Snakemake jobs do not

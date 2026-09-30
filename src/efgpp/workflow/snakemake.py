@@ -54,7 +54,7 @@ def render_rule(project: Project, step: Step, by_id: dict[str, Step]) -> str:
         f"        mem_mb={step.mem_mb},",
         f"        runtime={step.runtime_min},",
         "    log:",
-        f'        ".efgpp/logs/snakemake/{step.id}.log",',
+        f'        "logs/snakemake/{step.id}.log",',
         f"    message: {step.description!r}",
         "    shell:",
         f"        {(step_command(project, step) + ' > {log} 2>&1')!r}",

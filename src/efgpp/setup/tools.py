@@ -1,7 +1,8 @@
 """Locating scientific executables inside EFGPP's isolated environments.
 
 Search order for a tool: explicit override in project.yaml (execution.tools) ->
-.efgpp/bin -> the tool's own environment (.efgpp/envs/<env>) -> PATH.
+software/bin -> the tool's own environment (software/envs/<env>) -> legacy .efgpp/ ->
+$EFGPP_TOOLS_HOME (only when set) -> PATH.
 Each tool belongs to exactly one environment; there is no monolithic environment.
 """
 
@@ -15,20 +16,14 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import platformdirs
-
 from efgpp.project import Project
 
 
-def shared_root() -> Path:
-    """Per-user install root shared by all projects (`--shared`).
-
-    Defaults to ~/.local/share/efgpp; set EFGPP_TOOLS_HOME to put it elsewhere (e.g. project
-    storage on a cluster where the home quota is small)."""
+def shared_root() -> Path | None:
+    """Optional install root shared by several projects (`--shared`): the directory named by
+    EFGPP_TOOLS_HOME. There is no default: without it, everything installs into the project."""
     override = os.environ.get("EFGPP_TOOLS_HOME")
-    if override:
-        return Path(override).expanduser()
-    return Path(platformdirs.user_data_dir("efgpp", appauthor=False))
+    return Path(override).expanduser() if override else None
 
 
 @dataclass(frozen=True)
@@ -102,8 +97,11 @@ class ToolNotFoundError(RuntimeError):
 
 
 def env_prefixes(project: Project, env: str) -> list[Path]:
-    base = project.envs_dir / env
-    return [base / ".pixi" / "envs" / "default", base]
+    out = []
+    for envs in (project.envs_dir, *(d / "envs" for d in project.legacy_software_dirs)):
+        base = envs / env
+        out += [base / ".pixi" / "envs" / "default", base]
+    return out
 
 
 def env_bin_dirs(prefix: Path) -> list[Path]:
@@ -128,6 +126,7 @@ def resolve(project: Project | None, name: str) -> ResolvedTool:
                 raise ToolNotFoundError(f"{name}: configured path {p} does not exist")
             return _finish(ResolvedTool(name, p, spec.env if p.suffix == ".py" else "override"), project)
         search: list[tuple[Path, str, Path | None]] = [(project.bin_dir, "project-bin", None)]
+        search += [(d / "bin", "project-bin", None) for d in project.legacy_software_dirs]
         for env_prefix in env_prefixes(project, spec.env):
             search += [(d, spec.env, env_prefix) for d in env_bin_dirs(env_prefix)]
         for directory, env, prefix in search:
@@ -136,17 +135,19 @@ def resolve(project: Project | None, name: str) -> ResolvedTool:
                     p = directory / cand
                     if p.is_file():
                         return _finish(ResolvedTool(name, p, env, prefix), project)
-    shared = shared_root() / "bin"
-    for exe in spec.executables:
-        for cand in _candidate_names(exe):
-            if (shared / cand).is_file():
-                return _finish(ResolvedTool(name, shared / cand, "shared-bin"), project)
+    shared_home = shared_root()
+    if shared_home is not None:
+        shared = shared_home / "bin"
+        for exe in spec.executables:
+            for cand in _candidate_names(exe):
+                if (shared / cand).is_file():
+                    return _finish(ResolvedTool(name, shared / cand, "shared-bin"), project)
     for exe in spec.executables:
         found = shutil.which(exe)
         if found:
             return _finish(ResolvedTool(name, Path(found), "PATH"), project)
     raise ToolNotFoundError(
-        f"{name} not found (looked in .efgpp/bin, .efgpp/envs/{spec.env} and PATH); "
+        f"{name} not found (looked in software/bin, software/envs and PATH); "
         f"run `efgpp setup data` or set execution.tools.{name} in project.yaml"
     )
 

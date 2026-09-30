@@ -32,7 +32,7 @@ def _print(report) -> None:  # type: ignore[no-untyped-def]
 def data(dry_run: bool = typer.Option(False, "--dry-run"),
          components: str = typer.Option("core,genetics,reporting", "--components",
                                         help="comma-separated: core,genetics,annotation,metaxcan,reporting"),
-         shared: bool = typer.Option(False, "--shared", help="download missing tools once for all your projects")) -> None:
+         shared: bool = typer.Option(False, "--shared", help="install into $EFGPP_TOOLS_HOME instead of ./software")) -> None:
     """Detect platform, build tool environments (Pixi/mamba), download anything still missing; lock."""
     from efgpp.setup.manager import setup_data
 
@@ -44,17 +44,13 @@ def data(dry_run: bool = typer.Option(False, "--dry-run"),
 
 @app.command("tools")
 def tools(names: list[str] = typer.Argument(None, help="tools to install (default: all missing)"),
-          shared: bool = typer.Option(False, "--shared", help="install into the per-user folder shared by all projects"),
+          shared: bool = typer.Option(False, "--shared", help="install into $EFGPP_TOOLS_HOME instead of ./software"),
           force: bool = typer.Option(False, "--force", help="reinstall even if the tool is already available")) -> None:
     """Download tools from their official sources: plink2 plink flashpca2 bcftools tabix bgzip
     snakemake multiqc oc predixcan vep."""
     from efgpp.setup.installers import INSTALLERS, install_root, install_tools
 
-    try:
-        project: Project | None = Project.load(state.project_root)
-    except ProjectNotFoundError:
-        project = None
-        shared = True  # outside a project, tools go to the shared folder
+    project = _optional_project()  # outside a project, tools go to ./software
     wanted = list(names) if names else list(INSTALLERS)
     root = install_root(project, shared)
     console.print(f"[dim]installing into {root}[/]")
@@ -70,7 +66,7 @@ def tools(names: list[str] = typer.Argument(None, help="tools to install (defaul
 
 @app.command("toolkit")
 def toolkit(names: list[str] = typer.Argument(None, help="perl r prs prs-python prs-py27 simulation | all"),
-            shared: bool = typer.Option(False, "--shared", help="install once for all projects (~/.local/share/efgpp)"),
+            shared: bool = typer.Option(False, "--shared", help="install into $EFGPP_TOOLS_HOME instead of ./software"),
             list_: bool = typer.Option(False, "--list", help="show what each toolkit contains")) -> None:
     """Install complete toolkits: Perl, R + PRS R packages (LDpred-2, lassosum, ...), PRS binaries and
     repositories (PRSTools), Python 2.7/3.10 method environments, simulation (simuPOP, msprime)."""
@@ -94,7 +90,6 @@ def toolkit(names: list[str] = typer.Argument(None, help="perl r prs prs-python 
         console.print(f"\naliases: {', '.join(f'{k} = {v}' for k, v in ALIASES.items())}")
         return
     project = _optional_project()
-    shared = shared or project is None
     console.print(f"[dim]installing into {install_root(project, shared)}[/]")
     try:
         results = install_toolkits(project, list(names), shared=shared,
@@ -115,7 +110,7 @@ def toolkit(names: list[str] = typer.Argument(None, help="perl r prs prs-python 
 
 
 @app.command("check")
-def check(shared: bool = typer.Option(False, "--shared", help="check the shared per-user install only"),
+def check(shared: bool = typer.Option(False, "--shared", help="check the $EFGPP_TOOLS_HOME install only"),
           toolkits: str = typer.Option("all", "--toolkits", help="comma-separated toolkits to check, or 'none'")) -> None:
     """Check every tool, toolkit, R package and repository: installed or missing."""
     from efgpp.setup.installers import COMPONENT_TOOLS

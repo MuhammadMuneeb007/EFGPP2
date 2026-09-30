@@ -46,7 +46,7 @@ def export_slurm(project: Project, out_dir: Path | None = None) -> list[Path]:
             f"#SBATCH --cpus-per-task={threads}",
             f"#SBATCH --mem={mem}M",
             f"#SBATCH --time={minutes // 60:02d}:{minutes % 60:02d}:00",
-            f"#SBATCH --output={project.root.as_posix()}/.efgpp/logs/slurm_{group}_%j.out",
+            f"#SBATCH --output={project.root.as_posix()}/logs/slurm_{group}_%j.out",
         ]
         if hpc.partition:
             header.append(f"#SBATCH --partition={hpc.partition}")

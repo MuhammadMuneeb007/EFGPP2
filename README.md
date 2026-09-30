@@ -23,7 +23,7 @@ EFGPP uses **two kinds of environment**. You only ever activate the first one.
 | Environment | Contains | Who manages it |
 |---|---|---|
 | **`efgpp`** (conda or a uv venv) | the EFGPP Python application: Polars, DuckDB, Pandera, Typer… | you: create it once, `conda activate efgpp` per session |
-| **`<project>/.efgpp/envs/{genetics,annotation,metaxcan,reporting}`** | scientific tools: PLINK 2, bcftools, VEP, OpenCRAVAT, MetaXcan, MultiQC | EFGPP: created by `efgpp setup data` and switched automatically per step |
+| **`<project>/software/envs/<tool>`** — one per tool | scientific tools: PLINK 2, bcftools, VEP (+ Perl), OpenCRAVAT, MetaXcan, MultiQC, Snakemake, R, PRS tools | EFGPP: created by `efgpp setup data` and switched automatically per step |
 
 Scientific tools conflict with each other (e.g. VEP needs Perl, MetaXcan its own Python), so
 each group gets its own environment. You never `conda activate` these: when a step runs,
@@ -97,9 +97,8 @@ Beyond the data-layer tools, EFGPP installs complete toolkits for the software u
 (the requirements are taken from PRSTools):
 
 ```bash
-export EFGPP_TOOLS_HOME=/path/on/project/storage/efgpp_tools   # optional; default ~/.local/share/efgpp
 efgpp setup toolkit --list          # contents of every toolkit
-efgpp setup toolkit all --shared    # perl, r, prs-python, prs-py27, prs, simulation
+efgpp setup toolkit all             # perl, r, prs-python, prs-py27, prs, simulation -> ./software
 efgpp setup check                   # ✓/✗ for every tool, R package and repository
 ```
 
@@ -123,7 +122,7 @@ hand into `<install root>/opt/DBSLMM/software/dbslmm`.
 
 ```bash
 efgpp doctor                             # what is installed / missing
-pytest                                   # from the EFGPP2 folder; 70 tests
+pytest                                   # from the EFGPP2 folder; 72 tests
 ```
 
 ### If a tool cannot be installed with mamba/conda
@@ -136,7 +135,6 @@ project, so a missing Bioconda package never blocks you. You can also do this di
 cd ~/efgpp_projects/my_project
 efgpp setup tools                        # every missing tool
 efgpp setup tools plink2 snakemake multiqc   # only these
-efgpp setup tools --shared plink2        # once for all your projects (~/.local/share/efgpp)
 efgpp setup tools --force plink2         # reinstall
 ```
 
@@ -150,12 +148,15 @@ efgpp setup tools --force plink2         # reinstall
 | `predixcan` (MetaXcan) | MetaXcan source from GitHub + its own Python 3.11 environment (uv downloads Python if needed) | internet |
 | `vep` | official `ensemblorg/ensembl-vep` image with `vep` / `vep_install` wrapper scripts | Apptainer/Singularity (or Docker) |
 
-Everything lands in `<project>/.efgpp/` (or `~/.local/share/efgpp/` with `--shared`):
-executables in `bin/`, Python environments in `envs/`, builds in `opt/`, images in
-`containers/`. EFGPP finds them automatically. To call them yourself from the shell:
+Everything lands in the project directory, in plain sight: `software/envs/<tool>` (one
+conda environment per tool — never the `efgpp` environment), commands in `software/bin/`,
+sources and downloads in `software/opt/`, logs in `software/logs/`; reference data goes to
+`resources/`. Nothing is written to your home directory. (`--shared` installs into
+`$EFGPP_TOOLS_HOME` instead, only if you set it.) Each tool is installed with conda first
+(conda-forge + Bioconda); the official download is only a fallback. EFGPP finds them automatically. To call them yourself from the shell:
 
 ```bash
-eval "$(efgpp setup path)"               # puts .efgpp/bin (and the shared bin) on PATH
+eval "$(efgpp setup path)"               # puts ./software/bin on PATH
 plink2 --version && snakemake --version && multiqc --version
 ```
 
@@ -171,7 +172,7 @@ files, logs and reports that must never be committed to the code repository.
 conda activate efgpp
 mkdir -p ~/efgpp_projects/my_project && cd ~/efgpp_projects/my_project
 efgpp init .
-efgpp setup data                         # PLINK 2, bcftools, Snakemake, … in .efgpp/envs/<purpose>
+efgpp setup data                         # PLINK 2, bcftools, Snakemake, … in software/envs/<tool>
 
 efgpp data add genotype --path /data/genotype/cohort --format pgen --build auto --mode reference
 efgpp phenotype add --name trait_a --path phenotypes.csv --id-column IID --value-column TRAIT_A --type binary
@@ -211,7 +212,7 @@ sel.artifacts["genotype_qc"]  # exact registered artifacts (path, checksum, line
 | Canonical `participant_id`; native IDs resolved through alias files, never by row position | `data/aliases.py` |
 | participant → event → biospecimen → assay | `data/timeline.py`, `data/biospecimens.py` |
 | Storage policy `copy` / `link` / `reference` / `auto` (genotype cohorts are referenced in place) | `data/storage.py` |
-| Every external command: run record + `.efgpp/logs/RUN*.jsonl` + `.log` + `.yaml` | `data/provenance.py` |
+| Every external command: run record + `logs/RUN*.jsonl` + `.log` + `.yaml` | `data/provenance.py` |
 | `efgpp.lock.yaml`: software, environments, resources, config checksums (generated) | `setup/lock.py` |
 
 **Data vs Representation boundary.** The Data layer only does phenotype-independent work:
@@ -242,7 +243,7 @@ MetaXcan need WSL2 or Docker (`efgpp doctor` says so).
 - **Run `efgpp setup data` / `efgpp setup tools` on a login node.** They download packages,
   binaries and images, and compute nodes often have no internet access.
 - **Keep projects on a shared filesystem** (home or project storage, not node-local `/tmp`), so
-  compute jobs see the same `.efgpp/envs` and registry.
+  compute jobs see the same `software/envs` and registry.
 - **Submit work** either through Snakemake (`efgpp data prepare --executor slurm`, set
   `execution.hpc.partition` / `account` in `project.yaml`) or as explicit scripts
   (`efgpp export slurm` → `hpc/*.sbatch` + `hpc/submit_all.sh`). Both call EFGPP through

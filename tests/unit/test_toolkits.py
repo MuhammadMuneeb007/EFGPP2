@@ -73,8 +73,9 @@ def test_repo_install_creates_wrappers(tmp_path: Path, monkeypatch: pytest.Monke
 
 
 def test_check_reports_missing_items(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("EFGPP_TOOLS_HOME", raising=False)
     monkeypatch.setattr(ti, "install_root", lambda project, shared: tmp_path / ("shared" if shared else "proj"))
     res = ti.check_toolkit(None, "simulation")
     assert not res.ok and res.items[0].kind == "conda" and res.items[0].status == "missing"
-    (tmp_path / "shared" / "envs" / "simulation" / "conda-meta").mkdir(parents=True)
+    (tmp_path / "proj" / "envs" / "simulation" / "conda-meta").mkdir(parents=True)
     assert ti.check_toolkit(None, "simulation").ok

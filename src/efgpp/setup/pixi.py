@@ -40,14 +40,14 @@ def find_pixi(project: Project) -> Path | None:
 
 
 def bootstrap(project: Project, info: PlatformInfo) -> Path:
-    """Download the pixi binary into .efgpp/bin (no shell installer scripts are piped)."""
+    """Download the pixi binary into software/bin (no shell installer scripts are piped)."""
     existing = find_pixi(project)
     if existing:
         return existing
     asset = ASSETS.get((info.os, info.arch))
     if asset is None:
         raise RuntimeError(f"no pixi build for {info.os}/{info.arch}")
-    archive = project.path(".efgpp", "downloads", asset)
+    archive = project.software_dir / "downloads" / asset
     download(f"{RELEASE}/{asset}", archive)
     project.bin_dir.mkdir(parents=True, exist_ok=True)
     if asset.endswith(".zip"):

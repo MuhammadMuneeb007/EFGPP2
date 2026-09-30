@@ -1,7 +1,7 @@
 """`efgpp setup data` / `efgpp setup annotation`: detect, install, test and lock.
 
 Scientific tools go into small isolated environments (Pixi preferred; mamba, micromamba or
-conda as fallback) under .efgpp/envs/<purpose>. Any tool still missing afterwards is
+conda as fallback) under software/envs/<purpose>. Any tool still missing afterwards is
 downloaded from its official source by efgpp.setup.installers (binaries, source builds,
 Python environments, containers) into the project or the shared per-user folder.
 """
@@ -44,8 +44,8 @@ class SetupReport:
 
 
 def install_plink2_binary(project: Project, info: PlatformInfo) -> str:
-    """Official PLINK 2 binary into <project>/.efgpp/bin (kept for callers of the old API)."""
-    return install_plink2(project.path(".efgpp"), info, lambda _m: None).method
+    """Official PLINK 2 binary into <project>/software/bin (kept for callers of the old API)."""
+    return install_plink2(project.software_dir, info, lambda _m: None).method
 
 
 def _record_tool(project: Project, name: str) -> str | None:
@@ -67,7 +67,7 @@ def _create_env(project: Project, name: str, info: PlatformInfo, report: SetupRe
     kind, exe = manager
     proc = pixi.create_env(project, exe, name, info) if kind == "pixi" else micromamba.create_env(project, exe, name, kind)  # type: ignore[arg-type]
     if proc.returncode == 0:
-        report.add(f"environment {name}", "installed", f"{kind}: .efgpp/envs/{name}")
+        report.add(f"environment {name}", "installed", f"{kind}: software/envs/{name}")
         return True
     if kind == "pixi":  # retry with the fastest conda-family tool before giving up
         fallback = _conda_family(project)

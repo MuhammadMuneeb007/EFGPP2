@@ -20,13 +20,16 @@ Phenotypes are configuration objects: add as many as you need."""
 
 # Directory layout created by `efgpp init` (section 10 of the specification).
 PROJECT_DIRS = (
-    ".efgpp/bin",
-    ".efgpp/envs",
-    ".efgpp/containers",
+    # Installed software, in plain sight: one conda environment per tool, commands, sources.
+    "software/bin",
+    "software/envs",
+    "software/opt",
+    "software/downloads",
+    "logs",
+    # Internal bookkeeping only (locks, caches, temporary downloads).
     ".efgpp/cache",
     ".efgpp/downloads",
     ".efgpp/locks",
-    ".efgpp/logs",
     "registry",
     *(f"data/observed/{m}" for m in (
         "genotype", "phenotype", "covariates", "expression",
@@ -148,15 +151,25 @@ class Project:
 
     @property
     def logs_dir(self) -> Path:
-        return self.path(".efgpp", "logs")
+        return self.path("logs")
+
+    @property
+    def software_dir(self) -> Path:
+        """Everything EFGPP installs for this project: software/{bin,envs,opt,downloads}."""
+        return self.path("software")
+
+    @property
+    def legacy_software_dirs(self) -> list[Path]:
+        """Where earlier EFGPP versions installed tools (still searched)."""
+        return [self.path(".efgpp")]
 
     @property
     def bin_dir(self) -> Path:
-        return self.path(".efgpp", "bin")
+        return self.software_dir / "bin"
 
     @property
     def envs_dir(self) -> Path:
-        return self.path(".efgpp", "envs")
+        return self.software_dir / "envs"
 
     def artifact_dir(self, origin: Origin, modality: Modality | str, *parts: str) -> Path:
         mod = Modality(modality) if not isinstance(modality, Modality) else modality
@@ -208,7 +221,7 @@ def init_project(root: Path, name: str | None = None, force: bool = False) -> Pr
     gitignore = root / ".gitignore"
     if not gitignore.exists():
         gitignore.write_text(
-            "# EFGPP generated content\n.efgpp/\nwork/\nregistry/*.duckdb*\n*.tmp\n",
+            "# EFGPP generated content\n.efgpp/\nsoftware/\nlogs/\nwork/\nregistry/*.duckdb*\n*.tmp\n",
             encoding="utf-8",
         )
 

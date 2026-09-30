@@ -50,13 +50,54 @@ def test_unsupported_platforms_fail_clearly(tmp_path: Path) -> None:
         installers.install_vep_container(tmp_path, _info("windows"), lambda _m: None)
 
 
-def test_install_roots_and_path_line(project: Project, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(installers, "shared_root", lambda: tmp_path / "shared")
-    assert installers.install_root(project, shared=False) == project.path(".efgpp")
-    assert installers.install_root(project, shared=True) == tmp_path / "shared"
-    assert installers.install_root(None, shared=False) == tmp_path / "shared"
+def test_everything_installs_into_the_working_directory(project: Project, monkeypatch: pytest.MonkeyPatch,
+                                                         tmp_path: Path) -> None:
+    monkeypatch.delenv("EFGPP_TOOLS_HOME", raising=False)
+    assert installers.install_root(project, shared=False) == project.root / "software"
+    monkeypatch.chdir(tmp_path)
+    assert installers.install_root(None, shared=False) == tmp_path / "software"  # never the home directory
+    with pytest.raises(installers.InstallError, match="EFGPP_TOOLS_HOME"):
+        installers.install_root(project, shared=True)
+    monkeypatch.setenv("EFGPP_TOOLS_HOME", str(tmp_path / "tools"))
+    assert installers.install_root(project, shared=True) == tmp_path / "tools"
     project.bin_dir.mkdir(parents=True, exist_ok=True)
     assert installers.path_exports(project) == [project.bin_dir]
+    assert project.bin_dir == project.root / "software" / "bin" and project.logs_dir == project.root / "logs"
+
+
+def test_each_conda_tool_gets_its_own_environment() -> None:
+    envs = {tool: spec[0] for tool, spec in installers.CONDA_TOOLS.items()}
+    assert envs["vep"] == "vep" and "ensembl-vep" in installers.CONDA_TOOLS["vep"][1]
+    assert envs["bcftools"] == envs["tabix"] == envs["bgzip"] == "bcftools"
+    assert len({envs[t] for t in ("plink2", "plink", "bcftools", "snakemake", "multiqc", "oc", "vep", "predixcan")}) == 8
+    assert "efgpp" not in envs.values()
+
+
+def test_conda_first_then_official_source(project: Project, monkeypatch: pytest.MonkeyPatch) -> None:
+    import efgpp.setup.tools as tools_mod
+
+    monkeypatch.setattr(tools_mod, "available", lambda _p, _t: False)
+    monkeypatch.setattr(installers, "detect", lambda: _info())
+    calls: list[str] = []
+
+    def conda_ok(tool, root, info, say):  # type: ignore[no-untyped-def]
+        calls.append(f"conda:{tool}")
+        return installers.InstallResult(tool, "conda", root / "envs" / tool)
+
+    monkeypatch.setattr(installers, "install_conda_tool", conda_ok)
+    rows = installers.install_tools(project, ["bcftools", "tabix", "vep"])
+    assert calls == ["conda:bcftools", "conda:vep"]  # tabix comes with the bcftools environment
+    assert rows[1] == ("tabix", "installed", "with the bcftools environment")
+
+    def conda_fails(tool, root, info, say):  # type: ignore[no-untyped-def]
+        raise installers.InstallError("solver failed")
+
+    def official(root, info, say):  # type: ignore[no-untyped-def]
+        return installers.InstallResult("plink2", "official binary", root / "bin" / "plink2")
+
+    monkeypatch.setattr(installers, "install_conda_tool", conda_fails)
+    monkeypatch.setitem(installers.INSTALLERS, "plink2", official)
+    assert installers.install_tools(project, ["plink2"])[0][2].startswith("official binary")
 
 
 def test_every_component_tool_has_an_installer() -> None:

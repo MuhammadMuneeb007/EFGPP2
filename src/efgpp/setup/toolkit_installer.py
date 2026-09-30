@@ -1,12 +1,13 @@
 """Installing and checking toolkits (see efgpp.setup.toolkits for what each contains).
 
-Layout under the install root (<project>/.efgpp, or ~/.local/share/efgpp with --shared):
+Layout under the install root (<project>/software; $EFGPP_TOOLS_HOME only with --shared):
 
     envs/<env>/          conda environments (mamba > micromamba > conda; micromamba is
                          downloaded automatically when none is installed)
     opt/<repo>/          GitHub repositories and unpacked downloads
     bin/                 commands: links to environment executables and wrapper scripts
     toolkits/<name>.yaml what was installed, with per-item status
+    logs/<name>.install.log  full installer output
 """
 
 from __future__ import annotations
@@ -331,7 +332,7 @@ def install_toolkit(project: Project | None, name: str, *, shared: bool = False,
     if info.is_windows:
         raise InstallError("toolkits target Linux (and macOS); on Windows use WSL2")
     root = install_root(project, shared)
-    log = root / "toolkits" / f"{name}.install.log"
+    log = root / "logs" / f"{name}.install.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     log.write_text("", encoding="utf-8")
     result = ToolkitResult(name)
@@ -384,9 +385,14 @@ def check_toolkit(project: Project | None, name: str, *, shared: bool = False) -
     """Verify every item of a toolkit without installing anything."""
     tk = TOOLKITS[name]
     result = ToolkitResult(name)
-    roots = [install_root(project, False), install_root(project, True)] if project else [install_root(None, True)]
-    if shared:
-        roots = [install_root(project, True)]
+    from efgpp.setup.tools import shared_root
+
+    roots = [install_root(project, False)]
+    if project is not None:
+        roots += list(project.legacy_software_dirs)
+    shared_home = shared_root()
+    if shared_home is not None:
+        roots = [shared_home] if shared else [*roots, shared_home]
     root = next((r for r in roots if tk.env and (env_prefix(r, tk.env) / "conda-meta").exists()), roots[0])
     if tk.env:
         ok = (env_prefix(root, tk.env) / "conda-meta").exists()
@@ -401,7 +407,7 @@ def check_toolkit(project: Project | None, name: str, *, shared: bool = False) -
         result.add("repo", repo.name, ("manual" if repo.note and present else "ok") if present else "missing",
                    repo.note if present else "")
     if tk.env and (tk.r_cran or tk.r_bioc or tk.r_github or any(c.startswith("r-") for c in tk.conda)):
-        log = root / "toolkits" / f"{name}.check.log"
+        log = root / "logs" / f"{name}.check.log"
         log.parent.mkdir(parents=True, exist_ok=True)
         log.write_text("", encoding="utf-8")
         install_r_packages(root, tk, log, lambda _m: None, result, check_only=True)
