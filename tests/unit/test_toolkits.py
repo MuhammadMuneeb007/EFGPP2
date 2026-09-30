@@ -127,3 +127,25 @@ def test_tool_in_software_bin_runs_in_its_env(tmp_path) -> None:  # type: ignore
         pytest.skip("symlinks not permitted")
     assert _owning_env(link) == env.resolve()  # vep_install then sees the env's tabix/bgzip/perl
     assert _owning_env(real) is None
+
+
+def test_clinvar_file_date_with_dashes(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import gzip
+
+    from efgpp.data.references.variants import vcf_file_date
+
+    for header, expected in (("##fileDate=2026-09-28", "20260928"), ("##fileDate=20250101", "20250101")):
+        p = tmp_path / "c.vcf.gz"
+        with gzip.open(p, "wt") as fh:
+            fh.write(f"##fileformat=VCFv4.1\n{header}\n#CHROM\tPOS\n")
+        assert vcf_file_date(p) == expected
+
+
+def test_ctpr_uses_its_library_env() -> None:
+    from efgpp.setup.toolkits import TOOLKITS, resolve_names
+
+    ctpr = next(r for r in TOOLKITS["prs"].repos if r.name == "CTPR")
+    assert ctpr.commands == {"ctpr": ("", "ctpr")} and ctpr.lib_env == "ctpr"
+    assert TOOLKITS["ctpr-libs"].env == "ctpr" and "armadillo=9.900" in TOOLKITS["ctpr-libs"].conda
+    order = resolve_names(["prs"])
+    assert order.index("ctpr-libs") < order.index("prs")

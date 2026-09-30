@@ -314,8 +314,11 @@ def install_repo(root: Path, repo: Repo, log: Path, say: Progress, result: Toolk
             result.add("command", command, "failed", f"{rel} not found in {repo.github}")
             continue
         lib = ""
-        if repo.ld_library_path:
-            dirs = ":".join(str(dest / d) for d in repo.ld_library_path)
+        lib_dirs = [str(dest / d) for d in repo.ld_library_path]
+        if repo.lib_env:
+            lib_dirs.append(str(env_prefix(root, repo.lib_env) / "lib"))
+        if lib_dirs:
+            dirs = ":".join(lib_dirs)
             lib = f'LD_LIBRARY_PATH="{dirs}${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}}" '
         if interp == "":
             _executable(target)

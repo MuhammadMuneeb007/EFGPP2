@@ -41,6 +41,7 @@ class Repo:
     commands: dict[str, tuple[str, str]] = field(default_factory=dict)
     build: list[str] = field(default_factory=list)  # shell commands run inside the repo (env on PATH)
     ld_library_path: list[str] = field(default_factory=list)  # repo-relative library dirs for wrappers
+    lib_env: str | None = None  # conda environment whose lib/ the wrapper puts on LD_LIBRARY_PATH
     note: str = ""
 
 
@@ -129,7 +130,8 @@ TOOLKITS: dict[str, Toolkit] = {t.name: t for t in (
                  note="the `dbslmm` executable is distributed on Google Drive only: download it from the "
                       "DBSLMM README into opt/DBSLMM/software/dbslmm"),
             Repo("CTPR", "wonilchung/CTPR", build=["tar -xzf ctpr_v1.1.tar.gz"],
-                 note="unpacked; compile per the CTPR wiki (Armadillo is provided in the prs environment)"),
+                 commands={"ctpr": ("", "ctpr")}, lib_env="ctpr",
+                 note="prebuilt Linux binary; libarmadillo.so.9 + OpenBLAS from software/envs/ctpr"),
             Repo("NPS", "sgchun/nps", ref="1.1.1", build=["make"],
                  commands={"nps-run_all_chroms.sh": ("", "run_all_chroms.sh")}),
             Repo("XP-BLUP", "tanglab/XP-BLUP", commands={"xpblup.sh": ("", "xpblup.sh")}),
@@ -138,11 +140,17 @@ TOOLKITS: dict[str, Toolkit] = {t.name: t for t in (
                                                  "munge_sumstats.py": ("prs-py27", "munge_sumstats.py")}),
             Repo("AnnoPred", "yiminghu/AnnoPred", commands={"AnnoPred.py": ("prs-py27", "AnnoPred.py")}),
             Repo("PleioPred", "yiminghu/PleioPred", commands={"PleioPred.py": ("prs-py27", "PleioPred.py")}),
-            Repo("mtg2", "honglee0707/mtg2", note="Fortran source; build with `make -f Makefile-mtg2` if needed"),
+            Repo("mtg2", "honglee0707/mtg2",
+                 note="source only; its Makefile needs Intel ifort + static MKL (make.sh). Build where Intel "
+                      "oneAPI is available, or put the author's mtg2 binary in software/bin"),
         ],
         expose=["plink", "plink2", "gcta64", "gemma", "vcftools"],
         checks=["plink", "plink2", "gcta64", "gemma", "bolt", "PRSice", "gctb", "ldak"],
-        requires=["prs-python", "prs-py27", "r"],
+        requires=["prs-python", "prs-py27", "r", "ctpr-libs"],
+    ),
+    Toolkit(
+        "ctpr-libs", "Shared libraries of the prebuilt CTPR binary (Armadillo 9, OpenBLAS)",
+        env="ctpr", conda=["armadillo=9.900", "libopenblas"],
     ),
     Toolkit(
         "prs-python", "Python 3.10 for PRScs, PRScsx, PRSbils, LDpred, VIPRS, PolyFun, Hail (Java 11)",

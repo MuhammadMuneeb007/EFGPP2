@@ -41,11 +41,12 @@ def run_doctor(project: Project | None) -> list[DoctorLine]:
 
         with Registry.open(project) as reg:
             res = {r["name"]: r for r in reg.rows("SELECT name, version, local_path FROM resources")}
-        for name in ("genome", "vep", "clinvar", "alphamissense", "predictdb"):
-            cfg = getattr(project.resources, name)
+        for name in ("genome", "vep", "clinvar", "alphamissense", "predictdb", "predictdb-gtex-v8-expression",
+                     "predictdb-gtex-v8-splicing", "omicspred", "mimosa", "hibag"):
+            cfg = getattr(project.resources, name.replace("-", "_"), None)
             if name in res:
                 lines.append(DoctorLine("RESOURCES", name, "ok", str(res[name]["version"])))
-            elif cfg.enabled:
+            elif cfg is not None and cfg.enabled:
                 lines.append(DoctorLine("RESOURCES", name, "missing", f"efgpp resources install {name}"))
         ag = AlphaGenomeProvider(project).describe()
         if project.resources.alphagenome.enabled:
@@ -58,4 +59,5 @@ def run_doctor(project: Project | None) -> list[DoctorLine]:
     if info.is_windows:
         lines.append(DoctorLine("SYSTEM", "Windows", "info",
                                 "core + PLINK 2 run natively; VEP/bcftools/MetaXcan need WSL2 or Docker"))
-    return lines
+    order = list(dict.fromkeys(line.group for line in lines))
+    return sorted(lines, key=lambda line: order.index(line.group))  # stable: one block per group

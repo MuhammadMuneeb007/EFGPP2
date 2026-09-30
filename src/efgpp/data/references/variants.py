@@ -19,9 +19,9 @@ def vcf_file_date(path: Path) -> str | None:
         for line in fh:
             if not line.startswith("##"):
                 break
-            m = re.match(r"##fileDate=(\d{8})", line)
+            m = re.match(r"##fileDate=(\d{4})-?(\d{2})-?(\d{2})", line)
             if m:
-                return m.group(1)
+                return "".join(m.groups())
     return None
 
 
