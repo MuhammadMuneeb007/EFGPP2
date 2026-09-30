@@ -8,3 +8,7 @@ __pycache__/
 coverage.xml
 .test-cache/
 dist/
+
+# EFGPP project folders must never be committed (they hold cohort data)
+my_project/
+efgpp_projects/
